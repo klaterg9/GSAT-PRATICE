@@ -3,7 +3,7 @@
 PDF 모의고사(텍스트 PDF, 제본 스캔본, 펼침면 스캔본)에서 문항 영역을 직접 선택해 실전처럼 풀어보는 프로그램입니다.
 
 **📥 다운로드:** [Releases](https://github.com/klaterg9/GSAT-PRATICE/releases/latest)에서 받아 바로 실행하세요 (Python 설치 불필요).
-- Windows 10/11 (64비트): `GSAT_Practice.exe`
+- Windows 10/11 (64비트): `GSAT_Practice-windows.zip` → 압축을 풀고 폴더 안의 `GSAT_Practice.exe` 실행 (만든 모의고사는 폴더 안 `data`에 저장되니, 옮길 때는 폴더째)
 - macOS (Apple Silicon, M1 이후): `GSAT_Practice-mac-AppleSilicon.zip` → 처음 열 때 경고가 나오면 아래 [macOS에서 처음 열기](#macos에서-처음-열기) 참고
 
 ## ⚠️ 저작권 안내
@@ -76,13 +76,13 @@ git push origin v1.2.0
 ## 직접 빌드
 
 ```
-build.bat           → dist\GSAT_Practice.exe (Windows, 파일 하나)
-build.bat folder    → dist\GSAT_Practice\ 폴더 (Windows, 실행이 더 빠름)
+build.bat           → dist\GSAT_Practice\ 폴더 (Windows, 기본. 폴더째 옮기면 데이터까지 이동)
+build.bat onefile   → dist\GSAT_Practice.exe (Windows, 파일 하나)
 sh build_mac.sh     → dist/GSAT_Practice.app (맥에서 실행)
 ```
 
 - 받는 PC에 Python이 없어도 됩니다 (Windows 10/11 64비트).
-- 데이터(모의고사, 응시 기록)는 **EXE 옆 `data` 폴더**에 저장됩니다.
+- 데이터(모의고사, 응시 기록)는 **EXE 옆 `data` 폴더**(폴더형이면 `GSAT_Practice\data`)에 저장됩니다.
   EXE를 쓰기 금지된 곳(Program Files 등)에 두면 `%LOCALAPPDATA%\GSAT모의고사\data`에 저장됩니다.
 - 동작 확인: `GSAT_Practice.exe --selftest` 실행 후 같은 폴더의 `selftest.txt` 확인.
 

@@ -7,6 +7,7 @@ __pycache__/
 build/
 dist/
 dist_new/
+dist_test/
 
 # 사용자 데이터: 만든 모의고사, 응시 기록, 오류 로그 (저작권 도서 내용이 들어갈 수 있으므로 올리지 않음)
 data/

@@ -20,22 +20,28 @@ jobs:
           python-version: "3.13"
       - name: Install
         run: python -m pip install -r requirements.txt pyinstaller
-      - name: Build EXE
+      - name: Build (folder)
         env:
-          GSAT_BUILD_MODE: onefile
+          GSAT_BUILD_MODE: folder
         run: python -m PyInstaller --noconfirm --clean GSAT_Practice.spec
       - name: Self-test
         shell: pwsh
         run: |
-          $p = Start-Process dist\GSAT_Practice.exe -ArgumentList '--selftest' -PassThru -Wait
-          Get-Content dist\selftest.txt -Encoding utf8
+          $dir = "dist\GSAT_Practice"
+          $p = Start-Process "$dir\GSAT_Practice.exe" -ArgumentList '--selftest' -PassThru -Wait
+          Get-Content "$dir\selftest.txt" -Encoding utf8
           if ($p.ExitCode -ne 0) { throw "selftest failed" }
-          Remove-Item dist\selftest.txt
-          Remove-Item -Recurse -Force dist\data -ErrorAction SilentlyContinue
+          Remove-Item "$dir\selftest.txt"
+          Remove-Item -Recurse -Force "$dir\data" -ErrorAction SilentlyContinue
+      - name: Zip
+        shell: pwsh
+        run: |
+          Copy-Item packaging\README.txt dist\GSAT_Practice\README.txt
+          Compress-Archive -Path dist\GSAT_Practice -DestinationPath GSAT_Practice-windows.zip
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: dist/GSAT_Practice.exe
+          path: GSAT_Practice-windows.zip
 
   macos:
     runs-on: macos-latest  # Apple Silicon (M1 이후)
@@ -75,7 +81,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files="artifacts/windows/GSAT_Practice.exe artifacts/macos/GSAT_Practice-mac-AppleSilicon.zip"
+          files="artifacts/windows/GSAT_Practice-windows.zip artifacts/macos/GSAT_Practice-mac-AppleSilicon.zip"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" $files --clobber
           else

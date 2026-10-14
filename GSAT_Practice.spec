@@ -1,7 +1,7 @@
 # PyInstaller 빌드 설정.
 #
-#   Windows: build.bat          -> dist/GSAT_Practice.exe               (파일 하나)
-#            build.bat folder   -> dist/GSAT_Practice/GSAT_Practice.exe (폴더째 배포, 실행 빠름)
+#   Windows: build.bat          -> dist/GSAT_Practice/GSAT_Practice.exe (폴더째 배포, 기본)
+#            build.bat onefile  -> dist/GSAT_Practice.exe               (파일 하나)
 #   macOS  : ./build_mac.sh     -> dist/GSAT_Practice.app
 #
 # GitHub Actions(.github/workflows/release.yml)도 이 파일로 빌드한다.
@@ -9,7 +9,7 @@ import os
 import sys
 
 IS_MAC = sys.platform == "darwin"
-ONEFILE = not IS_MAC and os.environ.get("GSAT_BUILD_MODE", "onefile") != "folder"
+ONEFILE = not IS_MAC and os.environ.get("GSAT_BUILD_MODE", "folder") == "onefile"
 VERSION = os.environ.get("GSAT_VERSION", "1.0.0")
 
 datas, binaries, hiddenimports = [], [], []

@@ -3,13 +3,16 @@ PDF 모의고사(텍스트 PDF, 제본 스캔본, 펼침면 스캔본)에서 문
 ### 다운로드
 | 운영체제 | 파일 |
 |---|---|
-| Windows 10/11 (64비트) | `GSAT_Practice.exe` |
+| Windows 10/11 (64비트) | `GSAT_Practice-windows.zip` |
 | macOS (Apple Silicon, M1 이후) | `GSAT_Practice-mac-AppleSilicon.zip` |
 
 Python 설치는 필요 없습니다.
 
 ### Windows
-- `GSAT_Practice.exe`를 전용 폴더에 넣고 실행하세요. 만든 모의고사는 **EXE 옆 `data` 폴더**에 저장됩니다.
+1. zip을 풀면 `GSAT_Practice` 폴더가 나옵니다. 원하는 곳(예: 내 문서)에 두고, 안의 `GSAT_Practice.exe`를 실행하세요.
+2. 만든 모의고사는 **이 폴더 안의 `data` 폴더**에 저장됩니다. 다른 위치나 PC로 옮길 때는 **폴더를 통째로** 옮기면 됩니다.
+3. 새 버전으로 바꿀 때는 예전 폴더의 `data` 폴더를 새 폴더 안으로 복사하세요.
+   (v1.1.0 이하의 EXE 하나짜리 버전을 쓰셨다면, 그 EXE 옆의 `data` 폴더를 복사하면 됩니다.)
 - 서명되지 않은 실행 파일이라 SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
 
 ### macOS
