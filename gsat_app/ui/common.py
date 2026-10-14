@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScroll
 from ..pages import ZOOM
 
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+UI_FONTS = ["Malgun Gothic", "Apple SD Gothic Neo", "AppleGothic"]  # Windows / 맥 한글 글꼴
 BASE_SCALE = 1.9  # 문항 이미지 기본 크기: PDF 원래 크기의 약 1.4배 (화면 너비가 허락하는 한)
 
 ACCENT = "#2f6fed"
@@ -18,7 +19,7 @@ OK = "#1e9e5a"
 BAD = "#d64545"
 
 STYLE = f"""
-* {{ font-family: "Malgun Gothic", "맑은 고딕", sans-serif; }}
+* {{ font-family: "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "AppleGothic", sans-serif; }}
 QWidget {{ background: #ffffff; color: #1d1d1f; font-size: 14px; }}
 QPushButton {{ background: #f2f3f5; border: 1px solid #d9dbe0; border-radius: 6px; padding: 7px 14px; }}
 QPushButton:hover {{ background: #e8eaee; }}

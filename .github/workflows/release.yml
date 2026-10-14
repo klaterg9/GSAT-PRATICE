@@ -1,0 +1,83 @@
+# 버전 태그(v1.2.0 등)를 올리면 Windows EXE 와 맥 앱을 빌드해서 배포(Releases) 페이지에 올린다.
+# Actions 탭에서 "Run workflow" 로 수동 실행하면 빌드/점검만 하고 배포는 하지 않는다 (결과물은 Artifacts 에서 받기).
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Build EXE
+        env:
+          GSAT_BUILD_MODE: onefile
+        run: python -m PyInstaller --noconfirm --clean GSAT_Practice.spec
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\GSAT_Practice.exe -ArgumentList '--selftest' -PassThru -Wait
+          Get-Content dist\selftest.txt -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "selftest failed" }
+          Remove-Item dist\selftest.txt
+          Remove-Item -Recurse -Force dist\data -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/GSAT_Practice.exe
+
+  macos:
+    runs-on: macos-latest  # Apple Silicon (M1 이후)
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Build app
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then export GSAT_VERSION="${GITHUB_REF_NAME#v}"; fi
+          python -m PyInstaller --noconfirm --clean GSAT_Practice.spec
+      - name: Self-test
+        run: |
+          dist/GSAT_Practice.app/Contents/MacOS/GSAT_Practice --selftest
+          rm -f dist/GSAT_Practice.app/Contents/MacOS/selftest.txt
+          codesign --verify --deep --strict --verbose=1 dist/GSAT_Practice.app
+      - name: Zip
+        run: ditto -c -k --sequesterRsrc --keepParent dist/GSAT_Practice.app GSAT_Practice-mac-AppleSilicon.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: GSAT_Practice-mac-AppleSilicon.zip
+
+  release:
+    needs: [windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files="artifacts/windows/GSAT_Practice.exe artifacts/macos/GSAT_Practice-mac-AppleSilicon.zip"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $files --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" $files --title "GSAT 모의고사 $GITHUB_REF_NAME" --notes-file .github/release_notes.md
+          fi

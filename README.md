@@ -2,7 +2,9 @@
 
 PDF 모의고사(텍스트 PDF, 제본 스캔본, 펼침면 스캔본)에서 문항 영역을 직접 선택해 실전처럼 풀어보는 프로그램입니다.
 
-**📥 다운로드:** [Releases](https://github.com/klaterg9/GSAT-PRATICE/releases/latest)에서 `GSAT_Practice.exe`를 받아 바로 실행하세요 (Python 설치 불필요, Windows 10/11 64비트).
+**📥 다운로드:** [Releases](https://github.com/klaterg9/GSAT-PRATICE/releases/latest)에서 받아 바로 실행하세요 (Python 설치 불필요).
+- Windows 10/11 (64비트): `GSAT_Practice.exe`
+- macOS (Apple Silicon, M1 이후): `GSAT_Practice-mac-AppleSilicon.zip` → 처음 열 때 경고가 나오면 아래 [macOS에서 처음 열기](#macos에서-처음-열기) 참고
 
 ## ⚠️ 저작권 안내
 
@@ -47,11 +49,36 @@ python main.py
 - 받는 사람은 **가져오기**를 누르거나 `.gsat` 파일을 창(또는 EXE 아이콘)에 끌어다 놓으면 됩니다.
 - 가져온 모의고사는 문항 영역 수정은 안 되고(원본 PDF 필요), 정답 입력/수정은 됩니다.
 
-## EXE 만들기 / 배포
+## macOS에서 처음 열기
+
+Apple 개발자 서명이 없는 앱이라 처음 열 때 "Apple에서 확인할 수 없습니다" 경고가 나옵니다.
+
+1. zip을 풀고 `GSAT_Practice.app`을 **응용 프로그램** 폴더로 옮깁니다.
+2. 앱을 한 번 열어 경고가 뜨면 **시스템 설정 → 개인정보 보호 및 보안 → 아래쪽 "그래도 열기"**를 누릅니다.
+   (macOS 14 이하는 앱을 오른쪽 클릭 → **열기**도 됩니다.)
+3. 또는 터미널에서 `xattr -dr com.apple.quarantine /Applications/GSAT_Practice.app`
+
+맥에서는 데이터가 `~/Library/Application Support/GSAT모의고사/data`에 저장됩니다.
+인텔 맥은 실행 파일을 제공하지 않으니 소스로 실행하세요 (`pip install -r requirements.txt` 후 `python3 main.py`).
+
+## 배포 (GitHub Actions 자동 빌드)
+
+버전 태그를 올리면 GitHub Actions가 **Windows EXE와 맥 앱을 빌드·자체 점검한 뒤 Releases에 올립니다.**
 
 ```
-build.bat           → dist\GSAT_Practice.exe (파일 하나)
-build.bat folder    → dist\GSAT_Practice\ 폴더 (실행이 더 빠름)
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+- Actions 탭에서 **Run workflow**로 수동 실행하면 배포 없이 빌드만 하고, 결과물은 실행 기록의 Artifacts에서 받을 수 있습니다.
+- 배포 설명은 `.github/release_notes.md`를 사용합니다.
+
+## 직접 빌드
+
+```
+build.bat           → dist\GSAT_Practice.exe (Windows, 파일 하나)
+build.bat folder    → dist\GSAT_Practice\ 폴더 (Windows, 실행이 더 빠름)
+sh build_mac.sh     → dist/GSAT_Practice.app (맥에서 실행)
 ```
 
 - 받는 PC에 Python이 없어도 됩니다 (Windows 10/11 64비트).

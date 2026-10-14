@@ -21,11 +21,15 @@ def _data_root() -> Path:
     - 소스로 실행: 프로젝트 폴더/data
     - EXE 로 실행: EXE 옆 data 폴더 (USB 등으로 통째로 옮기기 쉬움).
       EXE 가 Program Files 처럼 쓰기 금지된 곳에 있으면 %LOCALAPPDATA%/GSAT모의고사/data
+    - 맥 앱으로 실행: ~/Library/Application Support/GSAT모의고사/data
+      (.app 안에 저장하면 앱을 업데이트할 때 지워지고 서명도 깨진다)
     """
     if os.environ.get("GSAT_DATA_DIR"):  # 테스트 등에서 다른 폴더를 쓰고 싶을 때
         return Path(os.environ["GSAT_DATA_DIR"])
     if not getattr(sys, "frozen", False):
         return Path(__file__).resolve().parent.parent / "data"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "GSAT모의고사" / "data"
     beside = Path(sys.executable).resolve().parent / "data"
     try:
         beside.mkdir(parents=True, exist_ok=True)

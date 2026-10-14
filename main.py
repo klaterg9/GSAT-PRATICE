@@ -25,8 +25,12 @@ def selftest() -> int:
     except Exception as e:  # noqa: BLE001
         lines.append(f"FAIL: {type(e).__name__}: {e}")
         code = 1
+    print("\n".join(lines))  # CI(GitHub Actions) 로그에서 확인용
     base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-    (base / "selftest.txt").write_text("\n".join(lines), encoding="utf-8")
+    try:
+        (base / "selftest.txt").write_text("\n".join(lines), encoding="utf-8")
+    except OSError:
+        pass
     return code
 
 

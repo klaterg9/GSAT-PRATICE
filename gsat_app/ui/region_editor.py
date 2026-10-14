@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QGridLayout, QG
 
 from .. import storage
 from ..pages import PageRef, PdfPages, stitch, trim_white
-from .common import ACCENT, SectionBar
+from .common import ACCENT, UI_FONTS, SectionBar
 
 HELP = ("<b>드래그</b>: 새 문항 영역 추가<br>"
         "<b>[이어 붙이기]</b> 켜고 드래그: 선택 문항에 영역 추가<br>"
@@ -91,7 +91,9 @@ class RegionItem(QGraphicsRectItem):
         self.tag_bg.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         self.tag_bg.setPen(QPen(Qt.NoPen))
         self.tag = QGraphicsSimpleTextItem(self.tag_bg)
-        font = QFont("Malgun Gothic", 11)
+        font = QFont()
+        font.setFamilies(UI_FONTS)
+        font.setPointSize(11)
         font.setBold(True)
         self.tag.setFont(font)
         self.tag.setBrush(QBrush(Qt.white))
