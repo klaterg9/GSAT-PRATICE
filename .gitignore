@@ -1,0 +1,24 @@
+# 가상환경 / 파이썬 캐시
+.venv/
+__pycache__/
+*.pyc
+
+# 빌드 결과물 (EXE)
+build/
+dist/
+dist_new/
+
+# 사용자 데이터: 만든 모의고사, 응시 기록, 오류 로그 (저작권 도서 내용이 들어갈 수 있으므로 올리지 않음)
+data/
+error.log
+selftest.txt
+*.gsat
+
+# 샘플/문제 PDF는 올리지 않음 (샘플은 tools/make_sample_pdf.py 로 다시 만들 수 있음)
+samples/
+*.pdf
+
+# PyCharm: 실행 설정만 공유
+.idea/*
+!.idea/runConfigurations/
+coverage/
