@@ -2,6 +2,8 @@
 
 PDF 모의고사(텍스트 PDF, 제본 스캔본, 펼침면 스캔본)에서 문항 영역을 직접 선택해 실전처럼 풀어보는 프로그램입니다.
 
+**📥 다운로드:** [Releases](https://github.com/klaterg9/GSAT-PRATICE/releases/latest)에서 `GSAT_Practice.exe`를 받아 바로 실행하세요 (Python 설치 불필요, Windows 10/11 64비트).
+
 ## ⚠️ 저작권 안내
 
 - 이 저장소는 **프로그램(소스 코드)만** 공유합니다. **도서, 문제집, 모의고사 등 프로그램 이외의 어떠한 저작권물도 포함하거나 공유하지 않습니다.**
