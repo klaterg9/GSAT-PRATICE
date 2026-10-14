@@ -32,7 +32,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "selftest failed" }
           Remove-Item dist\selftest.txt
           Remove-Item -Recurse -Force dist\data -ErrorAction SilentlyContinue
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/GSAT_Practice.exe
@@ -57,7 +57,7 @@ jobs:
           codesign --verify --deep --strict --verbose=1 dist/GSAT_Practice.app
       - name: Zip
         run: ditto -c -k --sequesterRsrc --keepParent dist/GSAT_Practice.app GSAT_Practice-mac-AppleSilicon.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: GSAT_Practice-mac-AppleSilicon.zip
@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Publish to Releases
