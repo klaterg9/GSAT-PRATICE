@@ -22,6 +22,8 @@ def _data_root() -> Path:
     - EXE 로 실행: EXE 옆 data 폴더 (USB 등으로 통째로 옮기기 쉬움).
       EXE 가 Program Files 처럼 쓰기 금지된 곳에 있으면 %LOCALAPPDATA%/GSAT모의고사/data
     """
+    if os.environ.get("GSAT_DATA_DIR"):  # 테스트 등에서 다른 폴더를 쓰고 싶을 때
+        return Path(os.environ["GSAT_DATA_DIR"])
     if not getattr(sys, "frozen", False):
         return Path(__file__).resolve().parent.parent / "data"
     beside = Path(sys.executable).resolve().parent / "data"

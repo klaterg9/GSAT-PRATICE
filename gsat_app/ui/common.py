@@ -34,6 +34,10 @@ QHeaderView::section {{ background: #f5f6f8; border: none; border-bottom: 1px so
 QTabBar::tab {{ padding: 8px 16px; }}
 QTabBar::tab:selected {{ color: {ACCENT}; font-weight: bold; }}
 QScrollArea {{ border: none; }}
+QCheckBox {{ spacing: 8px; }}
+QCheckBox::indicator {{ width: 18px; height: 18px; border: 2px solid #9aa0a6; border-radius: 4px; background: white; }}
+QCheckBox::indicator:hover {{ border-color: {ACCENT}; }}
+QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; image: none; }}
 QLabel#muted {{ color: #6b6f76; }}
 QLabel#title {{ font-size: 22px; font-weight: bold; }}
 """
@@ -41,6 +45,61 @@ QLabel#title {{ font-size: 22px; font-weight: bold; }}
 
 def circled(n: int) -> str:
     return CIRCLED[n - 1] if 1 <= n <= len(CIRCLED) else str(n)
+
+
+class SectionBar(QWidget):
+    """영역(수리/추리/지각) 선택 버튼 줄. 화면 너비를 꽉 채우고 영역마다 진행 상황을 보여준다."""
+    changed = Signal(int)
+
+    def __init__(self, names: list[str]):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        self.buttons: list[QPushButton] = []
+        self.names = list(names)
+        self._status = [""] * len(names)
+        self._done = [False] * len(names)
+        for i, name in enumerate(names):
+            b = QPushButton()
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setMinimumHeight(54)
+            b.setMinimumWidth(90)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            b.clicked.connect(lambda _=False, i=i: self.set_current(i, emit=True))
+            lay.addWidget(b)
+            self.buttons.append(b)
+        self.current = 0
+        self.set_current(0)
+
+    def set_current(self, i: int, emit: bool = False):
+        if not 0 <= i < len(self.buttons):
+            return
+        changed = i != self.current
+        self.current = i
+        self._paint()
+        if emit and changed:
+            self.changed.emit(i)
+
+    def set_status(self, i: int, text: str, done: bool = False):
+        self._status[i], self._done[i] = text, done
+        self._paint()
+
+    def _paint(self):
+        for i, b in enumerate(self.buttons):
+            cur = i == self.current
+            mark = " ✓" if self._done[i] else ""
+            b.setText(f"{self.names[i]}{mark}\n{self._status[i]}" if self._status[i] else f"{self.names[i]}{mark}")
+            b.setChecked(cur)
+            if cur:
+                style = f"background:{ACCENT}; color:white; border:2px solid {ACCENT};"
+            elif self._done[i]:
+                style = f"background:#eef8f2; color:{OK}; border:2px solid #bfe3cd;"
+            else:
+                style = "background:white; color:#1d1d1f; border:2px solid #d9dbe0;"
+            b.setStyleSheet(f"QPushButton {{ {style} border-radius:10px; font-size:15px; font-weight:bold;"
+                            f" padding:4px 8px; }} QPushButton:hover {{ border-color:{ACCENT}; }}")
 
 
 class ClickableFrame(QFrame):

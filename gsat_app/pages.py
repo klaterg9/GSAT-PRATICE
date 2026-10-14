@@ -34,7 +34,8 @@ class PdfPages:
         return self.doc.page_count
 
     def close(self):
-        self.doc.close()
+        if not self.doc.is_closed:
+            self.doc.close()
 
     def is_scanned(self, pno: int) -> bool:
         if pno not in self._scanned:

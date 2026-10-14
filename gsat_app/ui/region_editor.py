@@ -13,14 +13,14 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTransform
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QGridLayout, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
                                QGraphicsSimpleTextItem, QGraphicsView, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QSpinBox, QTabBar,
-                               QVBoxLayout, QWidget)
+                               QListWidgetItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSpinBox,
+                               QSplitter, QVBoxLayout, QWidget)
 
 from .. import storage
 from ..pages import PageRef, PdfPages, stitch, trim_white
-from .common import ACCENT
+from .common import ACCENT, SectionBar
 
 HELP = ("<b>드래그</b>: 새 문항 영역 추가<br>"
         "<b>[이어 붙이기]</b> 켜고 드래그: 선택 문항에 영역 추가<br>"
@@ -41,6 +41,7 @@ class Part:
 class EQuestion:
     parts: list[Part]
     answer: int | None = None  # 정답 입력 화면에서 넣은 값 (영역을 고쳐도 유지)
+    choices: int | None = None  # 이 문항만의 선지 수 (None 이면 영역의 기본 선지 수)
 
 
 @dataclass
@@ -54,7 +55,7 @@ class ESection:
     questions: list[EQuestion] = field(default_factory=list)
     two_column: bool = False
     start: int = 1
-    choices: int = 5
+    choices: int = 4  # 기본 선지 수
 
     def ordered(self) -> list[EQuestion]:
         """페이지 순 -> (2단이면 왼쪽 단 먼저) -> 위에서 아래 순"""
@@ -388,58 +389,28 @@ class RegionEditor(QDialog):
         self.setWindowTitle(f"문항 영역 선택 — {exam['name']}")
         self.resize(1400, 920)
         self.setWindowState(Qt.WindowMaximized)
+        self.setMinimumSize(760, 520)
         root = QVBoxLayout(self)
+        root.setSpacing(10)
 
-        # 상단: 영역 탭 + 옵션
-        top = QHBoxLayout()
-        self.tabs = QTabBar()
-        for s in sections:
-            self.tabs.addTab(s.name)
-        self.tabs.currentChanged.connect(self._switch_section)
-        top.addWidget(self.tabs)
-        top.addSpacing(20)
-        # 이 영역의 페이지 범위 (언제든 변경 가능, Enter 또는 다른 곳 클릭 시 적용)
-        top.addWidget(QLabel("페이지"))
-        self.first_spin, self.last_spin = QSpinBox(), QSpinBox()
-        for sp in (self.first_spin, self.last_spin):
-            sp.setRange(1, self.pages.page_count)
-            sp.setMinimumWidth(96)  # 세 자리 쪽수까지 보이게
-            sp.setAlignment(Qt.AlignCenter)
-            sp.setKeyboardTracking(False)  # 숫자를 다 친 뒤에만 반영 (12 입력 중 1 로 바뀌지 않게)
-            sp.editingFinished.connect(self._page_range_changed)
-        top.addWidget(self.first_spin)
-        top.addWidget(QLabel("~"))
-        top.addWidget(self.last_spin)
-        top.addWidget(QLabel(f"쪽  (전체 {self.pages.page_count}쪽)"))
-        top.addStretch()
-        self.count_label = QLabel()
-        self.count_label.setStyleSheet("font-weight: bold; font-size: 15px;")
-        top.addWidget(self.count_label)
-        top.addSpacing(16)
-        self.two_col = QCheckBox("2단 (왼쪽 단 먼저)")
-        self.two_col.toggled.connect(self._options_changed)
-        top.addWidget(self.two_col)
-        top.addWidget(QLabel("시작 번호"))
-        self.start_spin = QSpinBox()
-        self.start_spin.setRange(1, 999)
-        self.start_spin.valueChanged.connect(self._options_changed)
-        top.addWidget(self.start_spin)
-        top.addWidget(QLabel("선지 수"))
-        self.choice_spin = QSpinBox()
-        self.choice_spin.setRange(2, 10)
-        self.choice_spin.valueChanged.connect(self._options_changed)
-        top.addWidget(self.choice_spin)
-        root.addLayout(top)
+        # 맨 위: 영역 선택 (크게, 진행 상황 표시)
+        self.section_bar = SectionBar([sec.name for sec in sections])
+        self.section_bar.changed.connect(self._switch_section)
+        root.addWidget(self.section_bar)
 
-        # 가운데: 페이지 목록 | 페이지 | 문항 목록
-        mid = QHBoxLayout()
+        # 가운데: 페이지 목록 | PDF | 오른쪽 패널  (경계를 끌어 폭 조절, 좁아지면 페이지 목록 자동 숨김)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
         self.page_list = QListWidget()
-        self.page_list.setFixedWidth(130)
+        self.page_list.setMinimumWidth(90)
         self.page_list.currentRowChanged.connect(self._goto_page)
-        mid.addWidget(self.page_list)
+        self.splitter.addWidget(self.page_list)
 
-        center = QVBoxLayout()
+        center_w = QWidget()
+        center = QVBoxLayout(center_w)
+        center.setContentsMargins(0, 0, 0, 0)
         self.view = PageView(self.pages.display_image)
+        self.view.setMinimumWidth(320)
         self.view.region_drawn.connect(self._add_region)
         self.view.current_page_changed.connect(self._on_current_page)
         self.view.changed.connect(self._region_changed)
@@ -447,9 +418,11 @@ class RegionEditor(QDialog):
         self.view.scene().selectionChanged.connect(self._scene_selection)
         center.addWidget(self.view, 1)
         nav = QHBoxLayout()
-        prev_btn = QPushButton("◀ 이전 쪽")
+        prev_btn = QPushButton("◀")
+        prev_btn.setToolTip("이전 쪽 (PgUp)")
         prev_btn.clicked.connect(lambda: self._step_page(-1))
-        next_btn = QPushButton("다음 쪽 ▶")
+        next_btn = QPushButton("▶")
+        next_btn.setToolTip("다음 쪽 (PgDn)")
         next_btn.clicked.connect(lambda: self._step_page(1))
         fit_btn = QPushButton("폭 맞춤")
         fit_btn.clicked.connect(self.view.fit_width)
@@ -465,29 +438,81 @@ class RegionEditor(QDialog):
         nav.addWidget(self.append_btn)
         nav.addWidget(fit_btn)
         center.addLayout(nav)
-        mid.addLayout(center, 1)
+        self.splitter.addWidget(center_w)
 
-        side = QVBoxLayout()
-        help_label = QLabel(HELP)
-        help_label.setWordWrap(True)
-        help_label.setStyleSheet("background:#f5f6f8; border-radius:6px; padding:8px; font-size:12px;")
-        side.addWidget(help_label)
+        # 오른쪽 패널: 영역 설정 + 문항 목록 (세로로 넘치면 스크롤)
+        side_w = QWidget()
+        side = QVBoxLayout(side_w)
+        side.setContentsMargins(4, 0, 0, 0)
+        side.setSpacing(8)
+        settings = QGridLayout()
+        settings.setHorizontalSpacing(6)
+        settings.setVerticalSpacing(6)
+        title = QLabel("이 영역 설정")
+        title.setStyleSheet("font-weight: bold;")
+        settings.addWidget(title, 0, 0, 1, 4)
+        settings.addWidget(QLabel("페이지"), 1, 0)
+        self.first_spin, self.last_spin = QSpinBox(), QSpinBox()
+        for sp in (self.first_spin, self.last_spin):
+            sp.setRange(1, self.pages.page_count)
+            sp.setMinimumWidth(78)  # 세 자리 쪽수까지 보이게
+            sp.setAlignment(Qt.AlignCenter)
+            sp.setKeyboardTracking(False)  # 숫자를 다 친 뒤에만 반영 (12 입력 중 1 로 바뀌지 않게)
+            sp.editingFinished.connect(self._page_range_changed)
+        settings.addWidget(self.first_spin, 1, 1)
+        settings.addWidget(QLabel("~"), 1, 2, Qt.AlignCenter)
+        settings.addWidget(self.last_spin, 1, 3)
+        total = QLabel(f"전체 {self.pages.page_count}쪽 · Enter 로 적용")
+        total.setObjectName("muted")
+        settings.addWidget(total, 2, 1, 1, 3)
+        settings.addWidget(QLabel("시작 번호"), 3, 0)
+        self.start_spin = QSpinBox()
+        self.start_spin.setRange(1, 999)
+        self.start_spin.valueChanged.connect(self._options_changed)
+        settings.addWidget(self.start_spin, 3, 1)
+        settings.addWidget(QLabel("기본 선지 수"), 4, 0)
+        self.choice_spin = QSpinBox()
+        self.choice_spin.setRange(2, 10)
+        self.choice_spin.setToolTip("새로 만드는 문항의 선지 개수. 문항마다 아래 목록에서 따로 바꿀 수 있습니다.")
+        self.choice_spin.valueChanged.connect(self._options_changed)
+        settings.addWidget(self.choice_spin, 4, 1)
+        self.two_col = QCheckBox("2단 편집 (왼쪽 단 먼저 번호)")
+        self.two_col.toggled.connect(self._options_changed)
+        settings.addWidget(self.two_col, 5, 0, 1, 4)
+        settings.setColumnStretch(1, 1)
+        settings.setColumnStretch(3, 1)
+        side.addLayout(settings)
+
+        list_title = QLabel("문항 목록  ·  선지 수는 문항마다 바꿀 수 있어요")
+        list_title.setStyleSheet("font-weight: bold; padding-top: 6px;")
+        list_title.setWordWrap(True)
+        side.addWidget(list_title)
         self.q_list = QListWidget()
+        self.q_list.setMinimumHeight(160)
         self.q_list.currentRowChanged.connect(self._list_selected)
         side.addWidget(self.q_list, 1)
         del_btn = QPushButton("선택 문항 삭제")
         del_btn.setObjectName("danger")
         del_btn.clicked.connect(self._delete_question)
         side.addWidget(del_btn)
+        help_label = QLabel(HELP)
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("background:#f5f6f8; border-radius:6px; padding:8px; font-size:12px;")
+        side.addWidget(help_label)
         note = QLabel("정답은 문제를 다 푼 뒤 정답 입력 화면에서 입력합니다.")
         note.setObjectName("muted")
         note.setWordWrap(True)
         side.addWidget(note)
-        side_w = QWidget()
-        side_w.setLayout(side)
-        side_w.setFixedWidth(300)
-        mid.addWidget(side_w)
-        root.addLayout(mid, 1)
+        side_scroll = QScrollArea()
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setWidget(side_w)
+        side_scroll.setMinimumWidth(270)
+        self.splitter.addWidget(side_scroll)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes([120, 900, 320])
+        root.addWidget(self.splitter, 1)
 
         btns = QHBoxLayout()
         btns.addStretch()
@@ -495,6 +520,7 @@ class RegionEditor(QDialog):
         cancel.clicked.connect(self.reject)
         save = QPushButton("저장")
         save.setObjectName("primary")
+        save.setMinimumWidth(110)
         save.clicked.connect(self._save)
         btns.addWidget(cancel)
         btns.addWidget(save)
@@ -514,8 +540,14 @@ class RegionEditor(QDialog):
     def _number(self, q: EQuestion) -> int:
         return self.sec.start + self.sec.ordered().index(q)
 
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        # 좁은 화면에서는 페이지 목록을 숨겨 PDF 와 오른쪽 패널 자리를 확보
+        self.page_list.setVisible(self.width() >= 1150)
+
     def _switch_section(self, i: int):
         self.sec_i = i
+        self.section_bar.set_current(i)
         s = self.sec
         self._syncing = True
         self.two_col.setChecked(s.two_column)
@@ -575,6 +607,15 @@ class RegionEditor(QDialog):
         s.pages, s.refs = new_pages, new_refs
         self._load_pages()
 
+    def _update_section_status(self):
+        for i, sec in enumerate(self.sections):
+            n, exp = len(sec.questions), sec.expected
+            self.section_bar.set_status(i, f"{n} / {exp}문항" if exp else f"{n}문항", bool(exp) and n == exp)
+
+    def _question_choices_changed(self, q: EQuestion, v: int):
+        # 기본값과 같으면 '기본값 따름' 으로 둔다 (나중에 기본 선지 수를 바꾸면 같이 바뀌게)
+        q.choices = None if v == self.sec.choices else v
+
     def _options_changed(self):
         if self._syncing:
             return
@@ -631,15 +672,30 @@ class RegionEditor(QDialog):
         sel_row = -1
         for i, q in enumerate(ordered):
             p = q.parts[0]
-            extra = f"  (+{len(q.parts) - 1}개 이어짐)" if len(q.parts) > 1 else ""
-            QListWidgetItem(f"{self.sec.start + i}번    {self.pages.label(p.ref)}{extra}", self.q_list)
+            extra = f" +{len(q.parts) - 1}" if len(q.parts) > 1 else ""
+            item = QListWidgetItem(self.q_list)
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(6, 2, 6, 2)
+            label = QLabel(f"<b>{self.sec.start + i}번</b>&nbsp;&nbsp;<span style='color:#6b6f76'>"
+                           f"{self.pages.label(p.ref)}{extra}</span>")
+            label.setStyleSheet("background: transparent;")
+            h.addWidget(label, 1)
+            h.addWidget(QLabel("선지"))
+            spin = QSpinBox()
+            spin.setRange(2, 10)
+            spin.setValue(q.choices or self.sec.choices)
+            spin.setFixedWidth(62)
+            spin.valueChanged.connect(lambda v, q=q: self._question_choices_changed(q, v))
+            h.addWidget(spin)
+            item.setSizeHint(row.sizeHint())
+            self.q_list.setItemWidget(item, row)
             if q is self.sel_q:
                 sel_row = i
         self.q_list.setCurrentRow(sel_row)
         self._syncing = False
-        n, exp = len(ordered), self.sec.expected
-        color = "#1e9e5a" if exp and n == exp else ("#d64545" if exp and n > exp else "#1d1d1f")
-        self.count_label.setText(f"<span style='color:{color}'>{n}{f' / {exp}' if exp else ''}문항</span>")
+        self._update_section_status()
         counts: dict[PageRef, int] = {}
         for q in ordered:
             counts[q.parts[0].ref] = counts.get(q.parts[0].ref, 0) + 1
@@ -798,7 +854,7 @@ class RegionEditor(QDialog):
                     name = f"q{num:03d}.png"
                     img.save(tmp / name)
                     qs_json.append({
-                        "number": num, "stem": "", "choices": None, "num_choices": s.choices,
+                        "number": num, "stem": "", "choices": None, "num_choices": q.choices or s.choices,
                         "image": None, "image_full": name, "choice_mode": "image", "answer": q.answer,
                         "regions": [{"page": p.ref[0], "half": p.ref[1], "rect": list(p.rect)} for p in q.parts],
                     })
@@ -827,7 +883,10 @@ class RegionEditor(QDialog):
         super().reject()
 
     def _cleanup(self):
-        # 창이 닫히며 장면이 지워질 때 선택 변경 신호가 이미 삭제된 뷰를 건드리지 않도록
+        # 창이 닫히며 장면이 지워질 때 선택 변경 신호가 이미 삭제된 뷰를 건드리지 않도록 (한 번만)
+        if getattr(self, "_cleaned", False):
+            return
+        self._cleaned = True
         try:
             self.view.scene().selectionChanged.disconnect(self._scene_selection)
         except (RuntimeError, TypeError):
@@ -840,11 +899,12 @@ def sections_from_exam(exam: dict) -> list[ESection]:
     out = []
     for s in exam["sections"]:
         sec = ESection(s["key"], s["name"], s.get("minutes", 15), s.get("expected", 0), s.get("pages", []),
-                       two_column=s.get("two_column", False), start=s.get("start", 1), choices=s.get("choices", 5))
+                       two_column=s.get("two_column", False), start=s.get("start", 1), choices=s.get("choices", 4))
         for q in s["questions"]:
             parts = [Part((r["page"], r["half"]), tuple(r["rect"])) for r in q.get("regions", [])]
             if parts:
-                sec.questions.append(EQuestion(parts, q.get("answer")))
+                n = q.get("num_choices")
+                sec.questions.append(EQuestion(parts, q.get("answer"), None if n in (None, sec.choices) else n))
         out.append(sec)
     return out
 

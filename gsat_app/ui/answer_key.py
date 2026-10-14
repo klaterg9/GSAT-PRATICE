@@ -12,11 +12,11 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QScrollArea, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                               QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import storage
-from .common import ACCENT, BAD, OK
+from .common import ACCENT, BAD, OK, SectionBar
 
 CELL_W = 300  # 한 칸(번호 + 동그라미 5개) 대략 폭, 열 개수 계산용
 CIRCLE_TO_DIGIT = {c: i + 1 for i, c in enumerate("①②③④⑤⑥⑦⑧⑨⑩")}
@@ -78,6 +78,7 @@ class KeyCell(QFrame):
 
 class SectionKeyGrid(QWidget):
     changed = Signal()
+    section_done = Signal()  # 이 영역 마지막 문항까지 입력함 -> 다음 영역으로
 
     def __init__(self, section: dict, keys: dict[str, int], mine: dict[str, int] | None):
         super().__init__()
@@ -173,11 +174,18 @@ class SectionKeyGrid(QWidget):
 
     def focusInEvent(self, event):  # noqa: N802
         super().focusInEvent(event)
-        self.refresh()
+        self._safe_refresh()
 
     def focusOutEvent(self, event):  # noqa: N802
         super().focusOutEvent(event)
-        self.refresh()
+        self._safe_refresh()
+
+    def _safe_refresh(self):
+        # 창이 닫히는 중에는 자식 위젯이 먼저 지워져 있을 수 있다
+        try:
+            self.refresh()
+        except RuntimeError:
+            pass
 
     # ---- 입력
     def _set(self, index: int, value: int | None):
@@ -213,7 +221,11 @@ class SectionKeyGrid(QWidget):
         limit = self.questions[self.current].get("num_choices") or 5
         if text.isdigit() and 1 <= int(text) <= limit:
             self._set(self.current, int(text))
-            self._move(1)
+            if self.current == len(self.cells) - 1:
+                self.refresh()
+                self.section_done.emit()
+            else:
+                self._move(1)
         elif key in (Qt.Key_Backspace, Qt.Key_Delete):
             num = str(self.questions[self.current]["number"])
             if not self.keys.get(num) and key == Qt.Key_Backspace:
@@ -242,6 +254,11 @@ class SectionKeyGrid(QWidget):
         self.current = min(len(values), len(self.questions) - 1) if self.questions else 0
         self.setFocus()
         self.refresh()
+        if self.filled() == len(self.questions):
+            self.section_done.emit()
+
+    def filled(self) -> int:
+        return sum(1 for q in self.questions if self.keys.get(str(q["number"])))
 
     def _clear_all(self):
         for i in range(len(self.questions)):
@@ -250,8 +267,8 @@ class SectionKeyGrid(QWidget):
         self.refresh()
 
 
-class AnswerKeyWidget(QTabWidget):
-    """영역별 탭으로 정답 입력"""
+class AnswerKeyWidget(QWidget):
+    """맨 위 큰 영역 버튼으로 영역을 고르고 정답 입력. 한 영역을 다 넣으면 다음 영역으로 자동 이동."""
 
     def __init__(self, exam: dict, section_keys: list[str] | None = None,
                  mine: dict[str, dict[str, int]] | None = None):
@@ -259,24 +276,56 @@ class AnswerKeyWidget(QTabWidget):
         self.exam = exam
         self.keys: dict[str, dict[str, int]] = {}
         self.grids: list[SectionKeyGrid] = []
-        for s in exam["sections"]:
-            if section_keys and s["key"] not in section_keys:
-                continue
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        sections = [s for s in exam["sections"] if not section_keys or s["key"] in section_keys]
+        self.bar = SectionBar([s["name"] for s in sections])
+        self.bar.changed.connect(self.show_section)
+        lay.addWidget(self.bar)
+        self.stack = QStackedWidget()
+        lay.addWidget(self.stack, 1)
+        for s in sections:
             self.keys[s["key"]] = {str(q["number"]): q["answer"] for q in s["questions"] if q.get("answer")}
             grid = SectionKeyGrid(s, self.keys[s["key"]], (mine or {}).get(s["key"]))
-            grid.changed.connect(self._update_titles)
+            grid.changed.connect(self._update_status)
+            grid.section_done.connect(self._next_section)
             self.grids.append(grid)
-            self.addTab(grid, s["name"])
-        self._update_titles()
+            self.stack.addWidget(grid)
+        self._update_status()
 
-    def _update_titles(self):
+    def show_section(self, i: int):
+        if 0 <= i < len(self.grids):
+            self.bar.set_current(i)
+            self.stack.setCurrentIndex(i)
+            self.grids[i].setFocus()
+
+    def _next_section(self):
+        """현재 영역을 다 넣었으면 아직 덜 넣은 다음 영역으로"""
+        n = len(self.grids)
+        cur = self.stack.currentIndex()
+        for k in range(1, n):
+            i = (cur + k) % n
+            if self.grids[i].filled() < len(self.grids[i].questions):
+                self.show_section(i)
+                return
+
+    def _update_status(self):
         for i, g in enumerate(self.grids):
-            filled = sum(1 for q in g.questions if g.keys.get(str(q["number"])))
-            mark = " ✓" if g.questions and filled == len(g.questions) else f" ({filled}/{len(g.questions)})"
-            self.setTabText(i, g.section["name"] + mark)
+            filled, total = g.filled(), len(g.questions)
+            self.bar.set_status(i, f"{filled} / {total} 입력", bool(total) and filled == total)
+
+    def incomplete(self) -> list[tuple[int, str, int]]:
+        """정답을 다 넣지 않은 영역: (index, 이름, 빠진 개수)"""
+        out = []
+        for i, g in enumerate(self.grids):
+            miss = len(g.questions) - g.filled()
+            if miss:
+                out.append((i, g.section["name"], miss))
+        return out
 
     def missing(self) -> int:
-        return sum(1 for g in self.grids for q in g.questions if not g.keys.get(str(q["number"])))
+        return sum(m for _, _, m in self.incomplete())
 
     def save(self):
         """입력한 정답을 시험에 저장"""
@@ -289,7 +338,27 @@ class AnswerKeyWidget(QTabWidget):
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
         if self.grids:
-            self.currentWidget().setFocus()
+            self.grids[self.stack.currentIndex()].setFocus()
+
+
+def confirm_incomplete(parent, widget: AnswerKeyWidget, action: str) -> bool:
+    """빠진 영역이 있으면 알려주고, '입력하러 가기'를 누르면 그 영역을 열고 False"""
+    todo = widget.incomplete()
+    if not todo:
+        return True
+    lines = "\n".join(f"  · {name}: {miss}문항 미입력" for _, name, miss in todo)
+    box = QMessageBox(parent)
+    box.setWindowTitle(action)
+    box.setIcon(QMessageBox.Warning)
+    box.setText(f"정답을 다 넣지 않은 영역이 있습니다.\n\n{lines}")
+    go_fill = box.addButton("빠진 영역 입력하기", QMessageBox.AcceptRole)
+    box.addButton(f"그대로 {action}", QMessageBox.DestructiveRole)
+    box.setDefaultButton(go_fill)
+    box.exec()
+    if box.clickedButton() is go_fill:
+        widget.show_section(todo[0][0])
+        return False
+    return True
 
 
 class AnswerKeyPage(QWidget):
@@ -332,11 +401,7 @@ class AnswerKeyPage(QWidget):
         self.holder.addWidget(self.widget)
 
     def _grade(self):
-        from PySide6.QtWidgets import QMessageBox
-        missing = self.widget.missing()
-        if missing and QMessageBox.question(
-                self, "채점하기", f"정답을 입력하지 않은 문항이 {missing}개 있습니다.\n그 문항은 빼고 채점할까요?"
-        ) != QMessageBox.Yes:
+        if not confirm_incomplete(self, self.widget, "채점하기"):
             return
         self.widget.save()
         self.graded.emit()
@@ -367,5 +432,7 @@ class AnswerKeyDialog(QDialog):
         lay.addLayout(btns)
 
     def _save(self):
+        if not confirm_incomplete(self, self.widget, "저장하기"):
+            return
         self.widget.save()
         self.accept()
