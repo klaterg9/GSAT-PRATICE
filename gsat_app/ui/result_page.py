@@ -37,8 +37,11 @@ class ResultPage(QWidget):
         self.subtitle.setObjectName("muted")
         lay.addWidget(self.subtitle)
 
-        self.summary = QTableWidget(0, 6)
-        self.summary.setHorizontalHeaderLabels(["영역", "맞음", "틀림", "미응답", "정답률", "소요 / 제한"])
+        self.summary = QTableWidget(0, 7)
+        self.summary.setHorizontalHeaderLabels(["영역", "맞음", "틀림", "미응답", "정답률 (전체)", "정답률 (푼 문제)",
+                                                "소요 / 제한"])
+        self.summary.horizontalHeaderItem(4).setToolTip("안 푼 문제도 틀린 것으로 계산")
+        self.summary.horizontalHeaderItem(5).setToolTip("답을 고른 문제 중에서 맞힌 비율 (안 푼 문제 제외)")
         self.summary.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.summary.verticalHeader().setVisible(False)
         self.summary.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -95,7 +98,7 @@ class ResultPage(QWidget):
             r = self.summary.rowCount()
             self.summary.insertRow(r)
             vals = [s["name"], sc["correct"], sc["wrong"], sc["blank"], f"{sc['rate']:.1f}%",
-                    f"{fmt_time(rs['elapsed'])} / {fmt_time(rs['limit'])}"]
+                    storage.fmt_rate(sc["attempted_rate"]), f"{fmt_time(rs['elapsed'])} / {fmt_time(rs['limit'])}"]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(str(v))
                 item.setTextAlignment(Qt.AlignCenter)
@@ -128,8 +131,10 @@ class ResultPage(QWidget):
             graded = tot["correct"] + tot["wrong"] + tot["blank"]
             r = self.summary.rowCount()
             self.summary.insertRow(r)
+            attempted = tot["correct"] + tot["wrong"]
             vals = ["합계", tot["correct"], tot["wrong"], tot["blank"],
                     f"{(tot['correct'] / graded * 100) if graded else 0:.1f}%",
+                    storage.fmt_rate(tot["correct"] / attempted * 100 if attempted else None),
                     fmt_time(sum(s["elapsed"] for s in result["sections"]))]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(str(v))

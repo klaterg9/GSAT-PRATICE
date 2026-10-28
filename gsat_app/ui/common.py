@@ -158,6 +158,8 @@ class QuestionView(QScrollArea):
         self.setWidget(self.body)
         self._pixmap: QPixmap | None = None
         self._image_label: QLabel | None = None
+        self._passage_pixmap: QPixmap | None = None  # 보기(공통 자료)
+        self._passage_label: QLabel | None = None
         self._choice_wrap: QWidget | None = None
         self._img_width = 0
         self.rows: list[ChoiceRow | QPushButton] = []
@@ -172,8 +174,41 @@ class QuestionView(QScrollArea):
         self.rows = []
         self._pixmap = None
         self._image_label = None
+        self._passage_pixmap = None
+        self._passage_label = None
         self._choice_wrap = None
         self._img_width = 0
+
+    def _add_passage(self, exam_path: Path, section: dict, q: dict) -> None:
+        """이 문항이 쓰는 보기(공통 자료)를 문제 위에 상자로 보여준다"""
+        pid = q.get("passage")
+        psg = next((p for p in section.get("passages", []) if p.get("id") == pid), None) if pid else None
+        if psg is None:
+            return
+        pix = QPixmap(str(exam_path / section["key"] / psg["image"]))
+        if pix.isNull():
+            return
+        nums = sorted(x["number"] for x in section["questions"] if x.get("passage") == pid)
+        if len(nums) > 1 and nums == list(range(nums[0], nums[-1] + 1)):
+            scope = f"{nums[0]}~{nums[-1]}번 공통"
+        else:
+            scope = ", ".join(map(str, nums)) + "번 공통"
+        box = QFrame()
+        box.setObjectName("passageBox")
+        box.setStyleSheet("QFrame#passageBox { background:#f6f8fb; border:1px solid #d3dae6; border-radius:10px; }"
+                          " QFrame#passageBox QLabel { background: transparent; }")
+        bl = QVBoxLayout(box)
+        bl.setContentsMargins(14, 10, 14, 14)
+        bl.setSpacing(8)
+        cap = QLabel(f"<span style='font-weight:bold; color:#1b6e2f'>보기</span>"
+                     f"<span style='color:#6b6f76'>&nbsp;&nbsp;{scope}</span>")
+        bl.addWidget(cap)
+        self._passage_pixmap = pix
+        self._passage_label = QLabel()
+        self._passage_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._passage_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        bl.addWidget(self._passage_label)
+        self.lay.addWidget(box)
 
     def show_question(self, exam_path: Path, section: dict, q: dict, index: int, total: int,
                       selected: int | None = None, show_answer: bool = False) -> None:
@@ -184,6 +219,7 @@ class QuestionView(QScrollArea):
                       f"<span style='font-size:15px; color:#555'>&nbsp;/ {total}</span>"
                       f"<span style='font-size:13px; color:#999'>&nbsp;&nbsp;{section['name']} · {index + 1}번째</span>")
         self.lay.addWidget(head)
+        self._add_passage(exam_path, section, q)
 
         if q.get("stem"):
             stem = QLabel(q["stem"])
@@ -261,7 +297,7 @@ class QuestionView(QScrollArea):
             info.setStyleSheet("font-size: 15px; padding-top: 6px;")
             self.lay.addWidget(info)
         self.lay.addStretch()
-        self._sync_size()
+        self._fit_image()  # 보기 이미지까지 크기 맞춤
         self.verticalScrollBar().setValue(0)
 
     def set_zoom(self, z: float) -> None:
@@ -278,21 +314,25 @@ class QuestionView(QScrollArea):
             return
         super().wheelEvent(event)
 
-    def _fit_image(self) -> None:
-        if not self._pixmap or not self._image_label:
-            return
+    def _scale_into(self, pixmap: QPixmap, label: QLabel, avail: int) -> int:
         # 창 너비에 맞춰 크게 보여주되(반응형), 작은 문항이 지나치게 커지지 않도록 원본의 BASE_SCALE 배까지만
-        avail = max(200, self.viewport().width() - 60)
-        natural = int(self._pixmap.width() / ZOOM * BASE_SCALE * self.zoom)
-        width = min(avail, natural)
+        natural = int(pixmap.width() / ZOOM * BASE_SCALE * self.zoom)
+        width = max(50, min(avail, natural))
         dpr = self.devicePixelRatioF()
-        scaled = self._pixmap.scaledToWidth(int(width * dpr), Qt.SmoothTransformation)
+        scaled = pixmap.scaledToWidth(int(width * dpr), Qt.SmoothTransformation)
         scaled.setDevicePixelRatio(dpr)
-        self._image_label.setPixmap(scaled)
-        self._image_label.setFixedHeight(int(scaled.height() / dpr))
-        self._img_width = int(scaled.width() / dpr)
-        if self._choice_wrap is not None:
-            self._choice_wrap.setFixedWidth(self._img_width)
+        label.setPixmap(scaled)
+        label.setFixedHeight(int(scaled.height() / dpr))
+        return int(scaled.width() / dpr)
+
+    def _fit_image(self) -> None:
+        avail = max(200, self.viewport().width() - 60)
+        if self._passage_pixmap and self._passage_label:
+            self._scale_into(self._passage_pixmap, self._passage_label, avail - 30)  # 상자 안쪽 여백만큼 좁게
+        if self._pixmap and self._image_label:
+            self._img_width = self._scale_into(self._pixmap, self._image_label, avail)
+            if self._choice_wrap is not None:
+                self._choice_wrap.setFixedWidth(self._img_width)
         self._sync_size()  # 높이가 바뀐 즉시 아래 선지들을 다시 배치 (겹쳐 보이지 않게)
 
     def _sync_size(self) -> None:

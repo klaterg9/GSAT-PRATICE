@@ -126,11 +126,12 @@ def export_exam(exam_id: str, dest: Path) -> None:
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("exam.json", json.dumps(exam, ensure_ascii=False, indent=1))
         for s in exam["sections"]:
-            for q in s["questions"]:
-                for name in {q.get("image"), q.get("image_full")} - {None}:
-                    path = folder / s["key"] / name
-                    if path.exists():
-                        z.write(path, f"{s['key']}/{name}")
+            names = {n for q in s["questions"] for n in (q.get("image"), q.get("image_full")) if n}
+            names |= {p["image"] for p in s.get("passages", []) if p.get("image")}  # 보기(공통 자료)
+            for name in sorted(names):
+                path = folder / s["key"] / name
+                if path.exists():
+                    z.write(path, f"{s['key']}/{name}")
 
 
 def import_exam(src: Path) -> dict:
@@ -178,5 +179,11 @@ def score_section(section: dict, answers: dict) -> dict:
         else:
             wrong += 1
     graded = correct + wrong + blank
+    attempted = correct + wrong  # 실제로 답을 고른 문항
     return {"correct": correct, "wrong": wrong, "blank": blank, "no_key": no_key,
-            "total": len(section["questions"]), "rate": (correct / graded * 100) if graded else 0.0}
+            "total": len(section["questions"]), "rate": (correct / graded * 100) if graded else 0.0,
+            "attempted_rate": (correct / attempted * 100) if attempted else None}
+
+
+def fmt_rate(rate: float | None) -> str:
+    return "-" if rate is None else f"{rate:.1f}%"

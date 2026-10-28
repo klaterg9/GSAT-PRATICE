@@ -4,6 +4,7 @@ PDF 페이지 위에서 마우스로 드래그해 문항 영역을 지정한다.
 - 번호는 페이지 순서 -> 위에서 아래 순서로 자동으로 매겨진다. ('2단' 옵션: 왼쪽 단 먼저)
 - [이어 붙이기] 버튼 + 드래그: 선택한 문항에 영역 이어 붙이기 (단/페이지를 넘어가는 지문)
 - 박스 이동, 가장자리 드래그로 크기 조절, Delete 로 삭제
+- [보기 영역 추가] 버튼 + 드래그: 여러 문항이 같이 쓰는 보기(공통 자료) 영역. 응시할 때 해당 문항 맨 위에 나온다.
 정답은 여기서 넣지 않고, 문제를 다 푼 뒤 정답 입력 화면에서 입력한다.
 """
 from __future__ import annotations
@@ -13,7 +14,7 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTransform
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QGridLayout, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFrame, QGridLayout, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
                                QGraphicsSimpleTextItem, QGraphicsView, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSpinBox,
                                QSplitter, QVBoxLayout, QWidget)
@@ -26,7 +27,8 @@ HELP = ("<b>드래그</b>: 새 문항 영역 추가<br>"
         "<b>[이어 붙이기]</b> 켜고 드래그: 선택 문항에 영역 추가<br>"
         "(단/페이지를 넘어가는 지문용, 한 번 쓰면 자동으로 꺼짐)<br>"
         "<b>박스 끌기 / 가장자리</b>: 이동 / 크기 조절<br>"
-        "<b>박스 오른쪽 클릭</b>: 분리 / 삭제<br>"
+        "<b>[보기 영역 추가]</b> 켜고 드래그: 여러 문항이 같이 쓰는 보기(공통 자료) 지정 → 오른쪽에서 적용 문항 범위 입력<br>"
+        "<b>박스 오른쪽 클릭</b>: 분리 / 보기로 바꾸기 / 삭제<br>"
         "<b>Delete</b>: 선택 영역 삭제<br>"
         "<b>Ctrl+휠</b>: 확대/축소 &nbsp; <b>PgUp/PgDn</b>: 페이지")
 
@@ -37,11 +39,19 @@ class Part:
     rect: tuple[float, float, float, float]  # 페이지 이미지 기준 0~1
 
 
+@dataclass(eq=False)
+class EPassage:
+    """여러 문항이 같이 쓰는 보기(공통 자료) 영역"""
+    parts: list[Part]
+    want: tuple[int, int] | None = None  # 적용한 번호 범위. 아직 안 그린 번호는 그리는 순간 자동 연결
+
+
 @dataclass
 class EQuestion:
     parts: list[Part]
     answer: int | None = None  # 정답 입력 화면에서 넣은 값 (영역을 고쳐도 유지)
     choices: int | None = None  # 이 문항만의 선지 수 (None 이면 영역의 기본 선지 수)
+    passage: EPassage | None = None  # 이 문항이 쓰는 보기
 
 
 @dataclass
@@ -56,18 +66,37 @@ class ESection:
     two_column: bool = False
     start: int = 1
     choices: int = 4  # 기본 선지 수
+    passages: list[EPassage] = field(default_factory=list)
+
+    def position(self, part: Part):
+        """정렬 기준: 페이지 순 -> (2단이면 왼쪽 단 먼저) -> 위에서 아래 순"""
+        order = {r: i for i, r in enumerate(self.refs)}
+        col = 0
+        if self.two_column:
+            col = 0 if (part.rect[0] + part.rect[2]) / 2 < 0.5 else 1
+        return order.get(part.ref, 10 ** 6), col, part.rect[1], part.rect[0]
 
     def ordered(self) -> list[EQuestion]:
-        """페이지 순 -> (2단이면 왼쪽 단 먼저) -> 위에서 아래 순"""
-        order = {r: i for i, r in enumerate(self.refs)}
+        return sorted(self.questions, key=lambda q: self.position(q.parts[0]))
 
-        def key(q: EQuestion):
-            p = q.parts[0]
-            col = 0
-            if self.two_column:
-                col = 0 if (p.rect[0] + p.rect[2]) / 2 < 0.5 else 1
-            return order.get(p.ref, 10 ** 6), col, p.rect[1], p.rect[0]
-        return sorted(self.questions, key=key)
+    def ordered_passages(self) -> list[EPassage]:
+        return sorted(self.passages, key=lambda p: self.position(p.parts[0]))
+
+    def passage_label(self, p: EPassage) -> str:
+        i = self.ordered_passages().index(p)
+        return f"보기 {chr(ord('A') + i)}" if i < 26 else f"보기 {i + 1}"
+
+    def passage_numbers(self, p: EPassage) -> list[int]:
+        return [self.start + i for i, q in enumerate(self.ordered()) if q.passage is p]
+
+
+def numbers_text(nums: list[int]) -> str:
+    """[1,2,3] -> '1~3번', [1,3] -> '1, 3번', [] -> '적용 문항 없음'"""
+    if not nums:
+        return "적용 문항 없음"
+    if nums == list(range(nums[0], nums[-1] + 1)) and len(nums) > 1:
+        return f"{nums[0]}~{nums[-1]}번"
+    return ", ".join(map(str, nums)) + "번"
 
 
 def to_pixmap(img) -> QPixmap:
@@ -98,8 +127,15 @@ class RegionItem(QGraphicsRectItem):
         self.tag.setFont(font)
         self.tag.setBrush(QBrush(Qt.white))
 
+    @property
+    def is_passage(self) -> bool:
+        return isinstance(self.q, EPassage)
+
     def set_label(self, text: str, current: bool):
-        color = QColor(ACCENT) if current else QColor("#e8590c")
+        if self.is_passage:  # 보기는 초록색
+            color = QColor("#1b6e2f") if current else QColor("#2b8a3e")
+        else:
+            color = QColor(ACCENT) if current else QColor("#e8590c")
         self.setPen(QPen(color, 0))  # 0 = 확대해도 1픽셀
         pen = self.pen()
         pen.setCosmetic(True)
@@ -386,6 +422,7 @@ class RegionEditor(QDialog):
         self.sec_i = 0
         self.page_i = 0
         self.sel_q: EQuestion | None = None
+        self.sel_p: EPassage | None = None  # 선택한 보기
         self._syncing = False
 
         self.setWindowTitle(f"문항 영역 선택 — {exam['name']}")
@@ -432,11 +469,16 @@ class RegionEditor(QDialog):
         self.append_btn.setCheckable(True)
         self.append_btn.setToolTip("켜고 드래그하면 선택한 문항에 영역이 추가됩니다 (한 번 쓰면 자동으로 꺼짐)")
         self.append_btn.toggled.connect(self._append_toggled)
+        self.passage_btn = QPushButton("보기 영역 추가")
+        self.passage_btn.setCheckable(True)
+        self.passage_btn.setToolTip("켜고 드래그하면 여러 문항이 같이 쓰는 보기(공통 자료) 영역이 됩니다")
+        self.passage_btn.toggled.connect(self._passage_toggled)
         self.page_label = QLabel()
         nav.addWidget(prev_btn)
         nav.addWidget(self.page_label)
         nav.addWidget(next_btn)
         nav.addStretch()
+        nav.addWidget(self.passage_btn)
         nav.addWidget(self.append_btn)
         nav.addWidget(fit_btn)
         center.addLayout(nav)
@@ -484,6 +526,40 @@ class RegionEditor(QDialog):
         settings.setColumnStretch(1, 1)
         settings.setColumnStretch(3, 1)
         side.addLayout(settings)
+
+        # 보기를 선택했을 때만 보이는 설정 칸
+        self.passage_box = QFrame()
+        self.passage_box.setObjectName("passageBox")
+        self.passage_box.setStyleSheet("QFrame#passageBox { background:#eef8f2; border:2px solid #2b8a3e; border-radius:8px; }"
+                                       " QFrame#passageBox QLabel { background: transparent; }")
+        pb = QGridLayout(self.passage_box)
+        pb.setContentsMargins(10, 8, 10, 10)
+        pb.setVerticalSpacing(6)
+        self.passage_title = QLabel()
+        self.passage_title.setStyleSheet("font-weight: bold; font-size: 15px; color: #1b6e2f;")
+        pb.addWidget(self.passage_title, 0, 0, 1, 4)
+        pb.addWidget(QLabel("이 보기를 쓰는 문항"), 1, 0, 1, 4)
+        self.p_from, self.p_to = QSpinBox(), QSpinBox()
+        for sp in (self.p_from, self.p_to):
+            sp.setRange(1, 999)
+            sp.setMinimumWidth(64)
+            sp.setAlignment(Qt.AlignCenter)
+        pb.addWidget(self.p_from, 2, 0)
+        pb.addWidget(QLabel("~"), 2, 1, Qt.AlignCenter)
+        pb.addWidget(self.p_to, 2, 2)
+        apply_p = QPushButton("적용")
+        apply_p.setObjectName("primary")
+        apply_p.clicked.connect(self._apply_passage_range)
+        pb.addWidget(apply_p, 2, 3)
+        self.passage_info = QLabel()
+        self.passage_info.setWordWrap(True)
+        pb.addWidget(self.passage_info, 3, 0, 1, 4)
+        del_p = QPushButton("이 보기 삭제")
+        del_p.setObjectName("danger")
+        del_p.clicked.connect(lambda: self._delete_passage(self.sel_p))
+        pb.addWidget(del_p, 4, 0, 1, 4)
+        self.passage_box.setVisible(False)
+        side.addWidget(self.passage_box)
 
         list_title = QLabel("문항 목록  ·  선지 수는 문항마다 바꿀 수 있어요")
         list_title.setStyleSheet("font-weight: bold; padding-top: 6px;")
@@ -559,6 +635,7 @@ class RegionEditor(QDialog):
         self.last_spin.setValue(max(s.pages) + 1 if s.pages else self.pages.page_count)
         self._syncing = False
         self.sel_q = None
+        self.sel_p = None
         self._load_pages()
 
     def _load_pages(self):
@@ -585,7 +662,7 @@ class RegionEditor(QDialog):
             return
         new_refs = self.pages.refs(new_pages)
         keep = set(new_refs)
-        dropped = [(q, p) for q in s.questions for p in q.parts if p.ref not in keep]
+        dropped = [(q, p) for q in s.questions + s.passages for p in q.parts if p.ref not in keep]
         if dropped:
             nq = len({id(q) for q, _ in dropped})
             if QMessageBox.question(
@@ -600,6 +677,8 @@ class RegionEditor(QDialog):
             for q, p in dropped:
                 q.parts.remove(p)
             s.questions = [q for q in s.questions if q.parts]
+            for psg in [psg for psg in s.passages if not psg.parts]:
+                self._delete_passage(psg, refresh=False)
             if self.sel_q is not None and self.sel_q not in s.questions:
                 self.sel_q = None
         self._syncing = True
@@ -662,12 +741,41 @@ class RegionEditor(QDialog):
                     continue
                 item = RegionItem(self.view, q, part, self.view.from_norm(index[part.ref], part.rect))
                 self.view.add_region_item(item)
-                item.set_label(f"{num}번{' (이어짐)' if k else ''}", q is self.sel_q)
+                item.set_label(self._label_for(item), q is self.sel_q)
                 if q is self.sel_q:
                     item.setSelected(True)
+        for psg in self.sec.ordered_passages():
+            for part in psg.parts:
+                if part.ref not in index:
+                    continue
+                item = RegionItem(self.view, psg, part, self.view.from_norm(index[part.ref], part.rect))
+                self.view.add_region_item(item)
+                item.set_label(self._label_for(item), psg is self.sel_p)
+                if psg is self.sel_p:
+                    item.setSelected(True)
         self._syncing = False
+        self._update_passage_panel()
+
+    def _label_for(self, item: RegionItem) -> str:
+        owner, cont = item.q, item.q.parts.index(item.part) > 0 if item.part in item.q.parts else False
+        if isinstance(owner, EPassage):
+            label = self.sec.passage_label(owner)
+            return f"{label} · {numbers_text(self.sec.passage_numbers(owner))}{' (이어짐)' if cont else ''}"
+        num = self.sec.start + self.sec.ordered().index(owner)
+        tag = f" [{self.sec.passage_label(owner.passage)}]" if owner.passage in self.sec.passages else ""
+        return f"{num}번{tag}{' (이어짐)' if cont else ''}"
+
+    def _autolink(self):
+        """보기에 적용한 번호 범위 안에 새로 생긴 문항을 자동으로 연결 (이미 다른 보기가 있는 문항은 그대로)"""
+        ordered = self.sec.ordered()
+        for psg in self.sec.passages:
+            if psg.want:
+                for i, q in enumerate(ordered):
+                    if psg.want[0] <= self.sec.start + i <= psg.want[1] and q.passage is None:
+                        q.passage = psg
 
     def _refresh(self):
+        self._autolink()
         ordered = self.sec.ordered()
         self._syncing = True
         self.q_list.clear()
@@ -680,8 +788,10 @@ class RegionEditor(QDialog):
             row.setStyleSheet("background: transparent;")
             h = QHBoxLayout(row)
             h.setContentsMargins(6, 2, 6, 2)
+            psg = (f"&nbsp;<span style='color:#2b8a3e; font-weight:bold'>{self.sec.passage_label(q.passage)}</span>"
+                   if q.passage in self.sec.passages else "")
             label = QLabel(f"<b>{self.sec.start + i}번</b>&nbsp;&nbsp;<span style='color:#6b6f76'>"
-                           f"{self.pages.label(p.ref)}{extra}</span>")
+                           f"{self.pages.label(p.ref)}{extra}</span>{psg}")
             label.setStyleSheet("background: transparent;")
             h.addWidget(label, 1)
             h.addWidget(QLabel("선지"))
@@ -708,33 +818,145 @@ class RegionEditor(QDialog):
 
     # ------------------------------------------------------------ 편집 동작
     def _append_toggled(self, on: bool):
-        if on and self.sel_q is None:
-            QMessageBox.information(self, "이어 붙이기", "먼저 영역을 이어 붙일 문항을 선택하세요.")
+        if on and self.sel_q is None and self.sel_p is None:
+            QMessageBox.information(self, "이어 붙이기", "먼저 영역을 이어 붙일 문항이나 보기를 선택하세요.")
             self.append_btn.setChecked(False)
             return
+        if on:
+            self.passage_btn.setChecked(False)
         self.view.append_mode = on
         self.append_btn.setStyleSheet(f"background:{ACCENT}; color:white; border:none;" if on else "")
 
+    def _passage_toggled(self, on: bool):
+        if on:
+            self.append_btn.setChecked(False)
+        self.passage_btn.setStyleSheet("background:#2b8a3e; color:white; border:none;" if on else "")
+
     def _add_region(self, ref: PageRef, rect, append: bool):
         part = Part(ref, rect)
-        if append and self.sel_q is not None:
+        if self.passage_btn.isChecked():  # 보기 영역 만들기
+            psg = EPassage([part])
+            self.sec.passages.append(psg)
+            self.sel_p, self.sel_q = psg, None
+            self.passage_btn.setChecked(False)
+            self._refresh()
+            self._prefill_passage_range()
+            return
+        if append and self.sel_p is not None:
+            self.sel_p.parts.append(part)
+        elif append and self.sel_q is not None:
             self.sel_q.parts.append(part)
         else:
             q = EQuestion([part])
             self.sec.questions.append(q)
-            self.sel_q = q
+            self.sel_q, self.sel_p = q, None
         self.append_btn.setChecked(False)  # 이어 붙이기는 한 번만
         self._refresh()
+
+    # ---- 보기
+    def _update_passage_panel(self):
+        psg = self.sel_p if self.sel_p in self.sec.passages else None
+        self.passage_box.setVisible(psg is not None)
+        if psg is None:
+            return
+        n = len(self.sec.questions)
+        for sp in (self.p_from, self.p_to):
+            sp.setRange(self.sec.start, self.sec.start + max(n, self.sec.expected) + 30)
+        nums = self.sec.passage_numbers(psg)
+        self.passage_title.setText(f"{self.sec.passage_label(psg)} 설정")
+        pending = ""
+        if psg.want:
+            missing = [k for k in range(psg.want[0], psg.want[1] + 1) if k not in nums]
+            if missing:
+                pending = (f"<br><span style='color:#c27c00'>{numbers_text(missing)}은(는) 아직 문항이 없어요. "
+                           "그리면 자동으로 연결됩니다.</span>")
+        self.passage_info.setText(f"현재 적용: <b>{numbers_text(nums)}</b>{pending}<br>"
+                                  "<span style='color:#6b6f76'>응시할 때 이 문항들 맨 위에 보기가 나옵니다.</span>")
+
+    def _prefill_passage_range(self):
+        """새 보기: 보기 바로 아래(다음)에 오는 문항 번호로 범위를 미리 채운다"""
+        psg = self.sel_p
+        if psg is None:
+            return
+        ordered = self.sec.ordered()
+        pos = self.sec.position(psg.parts[0])
+        # 보기 다음 문항이 아직 없으면 다음에 그릴 번호
+        nxt = next((i for i, q in enumerate(ordered) if self.sec.position(q.parts[0]) > pos), len(ordered))
+        num = self.sec.start + nxt
+        self._update_passage_panel()
+        self.p_from.setValue(num)
+        self.p_to.setValue(num)
+        self.p_to.setFocus()
+        self.p_to.selectAll()
+
+    def _apply_passage_range(self):
+        psg = self.sel_p
+        if psg is None:
+            return
+        a, b = sorted((self.p_from.value(), self.p_to.value()))
+        psg.want = (a, b)
+        for i, q in enumerate(self.sec.ordered()):
+            num = self.sec.start + i
+            if a <= num <= b:
+                q.passage = psg
+            elif q.passage is psg:
+                q.passage = None
+        self._refresh()
+
+    def _delete_passage(self, psg: EPassage | None, refresh: bool = True):
+        if psg is None or psg not in self.sec.passages:
+            return
+        self.sec.passages.remove(psg)
+        for q in self.sec.questions:
+            if q.passage is psg:
+                q.passage = None
+        if self.sel_p is psg:
+            self.sel_p = None
+        if refresh:
+            self._refresh()
 
     def _region_menu(self, item: RegionItem, global_pos):
         menu = QMenu(self)
         q, part = item.q, item.part
+        if isinstance(q, EPassage):
+            split = menu.addAction("이 영역만 보기에서 떼어 문항으로") if q.parts.index(part) > 0 or len(q.parts) > 1 else None
+            attach = menu.addAction("이 보기에 영역 이어 붙이기…")
+            menu.addSeparator()
+            delete = menu.addAction("이 보기 삭제")
+            chosen = menu.exec(global_pos)
+            if chosen is None:
+                return
+            if chosen is split:
+                q.parts.remove(part)
+                new_q = EQuestion([part])
+                self.sec.questions.append(new_q)
+                self.sel_q, self.sel_p = new_q, None
+            elif chosen is attach:
+                self.sel_p, self.sel_q = q, None
+                self._refresh()
+                self.append_btn.setChecked(True)
+                return
+            elif chosen is delete:
+                self._delete_passage(q, refresh=False)
+            self._refresh()
+            return
+        to_passage = menu.addAction("이 영역을 보기(공통 자료)로 바꾸기")
         split = menu.addAction("별도 문항으로 분리") if q.parts.index(part) > 0 else None
         attach = menu.addAction("이 문항에 영역 이어 붙이기…")
         menu.addSeparator()
         delete = menu.addAction("이 영역 삭제")
         chosen = menu.exec(global_pos)
         if chosen is None:
+            return
+        if chosen is to_passage:
+            q.parts.remove(part)
+            if not q.parts:
+                self.sec.questions.remove(q)
+            psg = EPassage([part])
+            self.sec.passages.append(psg)
+            self.sel_p, self.sel_q = psg, None
+            self._refresh()
+            self._prefill_passage_range()
             return
         if chosen is split:
             q.parts.remove(part)
@@ -763,15 +985,21 @@ class RegionEditor(QDialog):
         if r.width() > 5 and r.height() > 5:
             item.part.ref = self.sec.refs[i]
             item.part.rect = self.view.to_norm(i, r)
-        self.sel_q = item.q
+        self._select_owner(item.q)
         self._refresh()
+
+    def _select_owner(self, owner):
+        if isinstance(owner, EPassage):
+            self.sel_p, self.sel_q = owner, None
+        else:
+            self.sel_q, self.sel_p = owner, None
 
     def _scene_selection(self):
         if self._syncing:
             return
         items = [i for i in self.view.scene().selectedItems() if isinstance(i, RegionItem)]
-        if items and items[0].q is not self.sel_q:
-            self.sel_q = items[0].q
+        if items and items[0].q is not self.sel_q and items[0].q is not self.sel_p:
+            self._select_owner(items[0].q)
             self._update_selection_ui()  # 클릭 중인 박스를 다시 만들면 안 되므로 표시만 갱신
 
     def _update_selection_ui(self):
@@ -779,16 +1007,15 @@ class RegionEditor(QDialog):
         self._syncing = True
         self.q_list.setCurrentRow(ordered.index(self.sel_q) if self.sel_q in ordered else -1)
         for it in self.view.region_items:
-            if it.q in ordered:
-                num = self.sec.start + ordered.index(it.q)
-                k = it.q.parts.index(it.part) if it.part in it.q.parts else 0
-                it.set_label(f"{num}번{' (이어짐)' if k else ''}", it.q is self.sel_q)
+            if it.q in ordered or it.q in self.sec.passages:
+                it.set_label(self._label_for(it), it.q is self.sel_q or it.q is self.sel_p)
         self._syncing = False
+        self._update_passage_panel()
 
     def _list_selected(self, row: int):
         if self._syncing or row < 0:
             return
-        self.sel_q = self.sec.ordered()[row]
+        self.sel_q, self.sel_p = self.sec.ordered()[row], None
         self._refresh()
         self._show_selected()
 
@@ -812,6 +1039,8 @@ class RegionEditor(QDialog):
                 self.sec.questions.remove(it.q)
                 if self.sel_q is it.q:
                     self.sel_q = None
+            if not it.q.parts and isinstance(it.q, EPassage):
+                self._delete_passage(it.q, refresh=False)
         self._refresh()
 
     def _delete_question(self):
@@ -835,7 +1064,7 @@ class RegionEditor(QDialog):
         ) != QMessageBox.Yes:
             return
 
-        total = sum(len(s.questions) for s in self.sections)
+        total = sum(len(s.questions) + len(s.passages) for s in self.sections)
         progress = QProgressDialog("문항 이미지 저장 중...", None, 0, total, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(0)
@@ -847,6 +1076,22 @@ class RegionEditor(QDialog):
                 tmp = base / f"{s.key}_new"
                 shutil.rmtree(tmp, ignore_errors=True)
                 tmp.mkdir(parents=True)
+                # 보기(공통 자료) 이미지
+                passages_json, pid = [], {}
+                for k, psg in enumerate(s.ordered_passages(), start=1):
+                    progress.setLabelText(f"[{s.name}] {s.passage_label(psg)} 저장 중")
+                    QApplication.processEvents()
+                    img = stitch([trim_white(self.pages.crop(p.ref, p.rect)) for p in psg.parts])
+                    name = f"p{k:02d}.png"
+                    img.save(tmp / name)
+                    pid[id(psg)] = f"p{k}"
+                    passages_json.append({
+                        "id": f"p{k}", "label": s.passage_label(psg), "image": name,
+                        "range": list(psg.want) if psg.want else None,
+                        "regions": [{"page": p.ref[0], "half": p.ref[1], "rect": list(p.rect)} for p in psg.parts],
+                    })
+                    done += 1
+                    progress.setValue(done)
                 qs_json = []
                 for i, q in enumerate(s.ordered()):
                     num = s.start + i
@@ -859,6 +1104,7 @@ class RegionEditor(QDialog):
                         "number": num, "stem": "", "choices": None, "num_choices": q.choices or s.choices,
                         "image": None, "image_full": name, "choice_mode": "image", "answer": q.answer,
                         "regions": [{"page": p.ref[0], "half": p.ref[1], "rect": list(p.rect)} for p in q.parts],
+                        "passage": pid.get(id(q.passage)) if q.passage in s.passages else None,
                     })
                     done += 1
                     progress.setValue(done)
@@ -868,7 +1114,7 @@ class RegionEditor(QDialog):
                 sections_json.append({
                     "key": s.key, "name": s.name, "minutes": s.minutes, "expected": s.expected,
                     "pages": s.pages, "two_column": s.two_column,
-                    "start": s.start, "choices": s.choices, "questions": qs_json,
+                    "start": s.start, "choices": s.choices, "passages": passages_json, "questions": qs_json,
                 })
         except Exception as e:  # noqa: BLE001
             progress.close()
@@ -902,11 +1148,18 @@ def sections_from_exam(exam: dict) -> list[ESection]:
     for s in exam["sections"]:
         sec = ESection(s["key"], s["name"], s.get("minutes", 15), s.get("expected", 0), s.get("pages", []),
                        two_column=s.get("two_column", False), start=s.get("start", 1), choices=s.get("choices", 4))
+        by_id = {}
+        for pj in s.get("passages", []):
+            parts = [Part((r["page"], r["half"]), tuple(r["rect"])) for r in pj.get("regions", [])]
+            if parts:
+                by_id[pj["id"]] = EPassage(parts, tuple(pj["range"]) if pj.get("range") else None)
+                sec.passages.append(by_id[pj["id"]])
         for q in s["questions"]:
             parts = [Part((r["page"], r["half"]), tuple(r["rect"])) for r in q.get("regions", [])]
             if parts:
                 n = q.get("num_choices")
-                sec.questions.append(EQuestion(parts, q.get("answer"), None if n in (None, sec.choices) else n))
+                sec.questions.append(EQuestion(parts, q.get("answer"), None if n in (None, sec.choices) else n,
+                                               by_id.get(q.get("passage"))))
         out.append(sec)
     return out
 
