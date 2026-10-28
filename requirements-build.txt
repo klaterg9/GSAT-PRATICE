@@ -1,0 +1,4 @@
+# 실행 파일(EXE/.app) 빌드용
+-r requirements.txt
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

@@ -10,7 +10,7 @@ if not exist .venv\Scripts\python.exe (
     exit /b 1
 )
 
-.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller
+.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 if errorlevel 1 exit /b 1
 
 if /i "%1"=="onefile" (set GSAT_BUILD_MODE=onefile) else (set GSAT_BUILD_MODE=folder)

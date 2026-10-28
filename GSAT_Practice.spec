@@ -12,7 +12,10 @@ IS_MAC = sys.platform == "darwin"
 ONEFILE = not IS_MAC and os.environ.get("GSAT_BUILD_MODE", "folder") == "onefile"
 VERSION = os.environ.get("GSAT_VERSION", "1.0.0")
 
-datas, binaries, hiddenimports = [], [], []
+from PyInstaller.utils.hooks import collect_data_files
+
+# PyMuPDF 의 부속 데이터 파일(글꼴, 리소스 등)을 빠짐없이 포함
+datas, binaries, hiddenimports = collect_data_files("pymupdf"), [], []
 
 # 쓰지 않는 Qt 모듈 / 큰 라이브러리 제외 (용량 절약)
 EXCLUDES = [
