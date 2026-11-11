@@ -21,73 +21,131 @@ from pathlib import Path
 APP_DIR_NAME = "GSAT모의고사"
 
 
-def _user_data_root() -> Path:
-    """사용자 폴더의 데이터 위치 (프로그램 위치와 상관없이 항상 같은 곳)"""
+def _user_dir() -> Path:
+    """사용자별 프로그램 폴더 (설정 파일 위치, 맥의 기본 데이터 위치)"""
+    if os.environ.get("GSAT_CONFIG_DIR"):  # 테스트용
+        return Path(os.environ["GSAT_CONFIG_DIR"])
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME / "data"
+        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME
     base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Path(base) / APP_DIR_NAME / "data"
+    return Path(base) / APP_DIR_NAME
+
+
+CONFIG_PATH = _user_dir() / "config.json"
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_config(cfg: dict) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def default_data_root() -> Path:
+    """설정을 따로 안 했을 때의 데이터 폴더.
+
+    - 소스로 실행: 프로젝트 폴더/data
+    - Windows EXE: EXE 옆 data 폴더 (폴더째 옮기기 쉬움). 쓰기 금지된 곳이면 %LOCALAPPDATA%/GSAT모의고사/data
+    - 맥 앱: ~/Library/Application Support/GSAT모의고사/data (.app 안에 저장하면 업데이트 때 지워지고 서명이 깨짐)
+    """
+    if not getattr(sys, "frozen", False):
+        return Path(__file__).resolve().parent.parent / "data"
+    if sys.platform == "darwin":
+        return _user_dir() / "data"
+    beside = Path(sys.executable).resolve().parent / "data"
+    try:
+        beside.mkdir(parents=True, exist_ok=True)
+        probe = beside / f".write_test_{uuid.uuid4().hex[:6]}"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return beside
+    except OSError:
+        return _user_dir() / "data"
+
+
+def _has_exams(root: Path) -> bool:
+    d = root / "exams"
+    return d.is_dir() and any((x / "exam.json").exists() for x in d.iterdir() if x.is_dir())
+
+
+ADOPTED_V141 = False  # v1.4.1 사용자 폴더 데이터를 이어서 쓰게 됐는지 (처음 실행 안내용)
 
 
 def _data_root() -> Path:
-    """데이터 폴더.
-
-    - 소스로 실행: 프로젝트 폴더/data
-    - EXE / 맥 앱으로 실행: 사용자 폴더
-        Windows: %LOCALAPPDATA%/GSAT모의고사/data
-        맥: ~/Library/Application Support/GSAT모의고사/data
-      예전(v1.4.0 이하) Windows 버전은 EXE 옆 data 폴더에 저장했는데, 새 버전으로 바꿀 때마다 data 를 복사해야 하고
-      OneDrive 폴더에 두면 동기화 때문에 저장이 실패했다. 예전 데이터는 처음 실행할 때 자동으로 옮긴다
-      (migrate_legacy_data).
-    """
+    """데이터 폴더: 테스트용 환경변수 -> 사용자가 정한 위치(저장 위치 설정) -> 기본 위치"""
+    global ADOPTED_V141
     if os.environ.get("GSAT_DATA_DIR"):  # 테스트 등에서 다른 폴더를 쓰고 싶을 때
         return Path(os.environ["GSAT_DATA_DIR"])
-    if not getattr(sys, "frozen", False):
-        return Path(__file__).resolve().parent.parent / "data"
-    return _user_data_root()
+    custom = load_config().get("data_dir")
+    if custom:
+        return Path(custom)
+    if getattr(sys, "frozen", False) and sys.platform != "darwin":
+        # v1.4.1 은 사용자 폴더에 저장했다. 거기에 모의고사가 있으면 계속 그 위치를 쓰도록 설정해 둔다
+        # (기본 위치를 다시 EXE 옆으로 바꾸면서 모의고사가 안 보이는 일이 없도록)
+        v141 = _user_dir() / "data"
+        if _has_exams(v141):
+            try:
+                save_config({**load_config(), "data_dir": str(v141)})
+                ADOPTED_V141 = True
+            except OSError:
+                pass
+            return v141
+    return default_data_root()
 
 
 DATA_DIR = _data_root() / "exams"
 
 
-def legacy_data_dirs() -> list[Path]:
-    """예전 버전이 쓰던 EXE 옆 data 폴더 (지금 EXE 폴더, 그리고 EXE 하나짜리 버전이 쓰던 상위 폴더)"""
-    if not getattr(sys, "frozen", False) or sys.platform == "darwin" or os.environ.get("GSAT_DATA_DIR"):
-        return []
-    here = Path(sys.executable).resolve().parent
-    return [d for d in (here / "data", here.parent / "data") if (d / "exams").is_dir()]
+def data_root() -> Path:
+    return DATA_DIR.parent
 
 
-def migrate_legacy_data(sources: list[Path] | None = None) -> int:
-    """예전 위치의 모의고사를 지금 데이터 폴더로 복사한다. 이미 있는 시험(같은 폴더 이름)은 건너뛴다.
-    예전 폴더는 지우지 않고 '옮겨졌습니다' 안내 파일만 남긴다. 옮긴 시험 수를 돌려준다."""
-    sources = legacy_data_dirs() if sources is None else sources
+def copy_exams(src_root: Path, dest_root: Path | None = None) -> int:
+    """src_root/exams 의 모의고사를 dest_root/exams 로 복사. 같은 이름(같은 시험)은 건너뛴다. 복사한 수를 돌려준다."""
+    src = src_root / "exams"
+    dest = (dest_root or data_root()) / "exams"
+    if not src.is_dir() or (dest.exists() and src.resolve() == dest.resolve()):
+        return 0
+    dest.mkdir(parents=True, exist_ok=True)
     moved = 0
-    for old in sources:
-        old_exams = old / "exams"
-        if not old_exams.is_dir() or old_exams.resolve() == DATA_DIR.resolve():
+    for d in sorted(src.iterdir()):
+        if not d.is_dir() or not (d / "exam.json").exists() or (dest / d.name).exists():
             continue
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        for d in sorted(old_exams.iterdir()):
-            if not d.is_dir() or not (d / "exam.json").exists() or (DATA_DIR / d.name).exists():
-                continue
-            tmp = DATA_DIR / f".{d.name}.moving"
-            shutil.rmtree(tmp, ignore_errors=True)
-            try:
-                shutil.copytree(d, tmp)
-                tmp.rename(DATA_DIR / d.name)
-                moved += 1
-            except OSError:
-                shutil.rmtree(tmp, ignore_errors=True)
+        tmp = dest / f".{d.name}.copying"
+        shutil.rmtree(tmp, ignore_errors=True)
         try:
-            (old / "옮겨졌습니다.txt").write_text(
-                "v1.4.1부터 모의고사와 응시 기록은 아래 폴더에 저장됩니다. 이 폴더의 모의고사는 그곳으로 복사되었습니다.\n"
-                f"{DATA_DIR.parent}\n\n"
-                "프로그램 홈 화면의 '데이터 폴더 열기'로 열 수 있습니다. 이 data 폴더는 지워도 됩니다.\n",
-                encoding="utf-8")
+            shutil.copytree(d, tmp)
+            tmp.rename(dest / d.name)
+            moved += 1
         except OSError:
-            pass
+            shutil.rmtree(tmp, ignore_errors=True)
     return moved
+
+
+def set_data_root(new_root: Path | None, copy_existing: bool = True) -> int:
+    """저장 위치 변경. None 이면 기본 위치로. copy_existing 이면 지금 모의고사를 새 위치로 복사(원래 위치는 그대로).
+    복사한 모의고사 수를 돌려준다."""
+    global DATA_DIR
+    target = Path(new_root) if new_root else default_data_root()
+    target.mkdir(parents=True, exist_ok=True)
+    probe = target / f".write_test_{uuid.uuid4().hex[:6]}"
+    probe.write_text("ok", encoding="utf-8")  # 쓸 수 없는 폴더면 여기서 OSError
+    probe.unlink()
+    moved = copy_exams(data_root(), target) if copy_existing else 0
+    cfg = load_config()
+    if new_root:
+        cfg["data_dir"] = str(target)
+    else:
+        cfg.pop("data_dir", None)
+    save_config(cfg)
+    DATA_DIR = target / "exams"
+    return moved
+
 
 DEFAULT_SECTIONS = [
     {"name": "수리영역", "count": 40, "minutes": 15},

@@ -7,15 +7,16 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                               QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QStackedWidget,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog,
+                               QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
+                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import storage
 from .answer_key import AnswerKeyDialog, AnswerKeyPage
 from .common import ACCENT
 from .create_dialog import CreateDialog
 from .random_dialog import RandomDialog
+from .retry_dialog import RetryPickDialog
 from .exam_page import ExamPage
 from ..pages import PdfPages
 from .region_editor import RegionEditor, has_regions, max_page_used, sections_from_exam
@@ -70,8 +71,8 @@ class HomePage(QWidget):
             ("+ 새 모의고사 만들기", self.win.create_exam),
             ("내보내기 (파일로 공유)", self.win.export_exam),
             ("가져오기", self.win.import_exam),
-            ("데이터 폴더 열기", self.win.open_data_folder),
-            ("예전 버전 데이터 가져오기", self.win.import_legacy),
+            ("저장 위치 설정", self.win.storage_settings),
+            ("다른 폴더의 모의고사 가져오기", self.win.import_legacy),
         ]
         for text, fn, *rest in buttons:
             if text is None:
@@ -170,6 +171,77 @@ def _exam_card(name: str, parts: str, key_info: str, key_done: bool, last: str) 
     return w
 
 
+class StorageDialog(QDialog):
+    """모의고사 저장 위치 설정"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("저장 위치 설정")
+        self.resize(620, 300)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(10)
+        title = QLabel("저장 위치 설정")
+        title.setObjectName("title")
+        lay.addWidget(title)
+        lay.addWidget(QLabel("만든 모의고사와 응시 기록이 저장되는 폴더입니다."))
+        self.path = QLabel()
+        self.path.setWordWrap(True)
+        self.path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.path.setStyleSheet("background:#f6f7f9; border:1px solid #e4e6eb; border-radius:8px; padding:8px;")
+        lay.addWidget(self.path)
+        self.copy = QCheckBox("지금 있는 모의고사를 새 위치로 복사 (원래 위치의 파일은 그대로 남음)")
+        self.copy.setChecked(True)
+        lay.addWidget(self.copy)
+        note = QLabel(f"기본 위치: {storage.default_data_root()}")
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        lay.addStretch()
+        row = QHBoxLayout()
+        open_btn = QPushButton("폴더 열기")
+        open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(storage.data_root()))))
+        reset = QPushButton("기본 위치로")
+        reset.clicked.connect(lambda: self._apply(None))
+        change = QPushButton("다른 폴더로 변경...")
+        change.setObjectName("primary")
+        change.clicked.connect(self._pick)
+        close = QPushButton("닫기")
+        close.clicked.connect(self.reject)
+        row.addWidget(open_btn)
+        row.addStretch()
+        row.addWidget(reset)
+        row.addWidget(change)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self._show()
+
+    def _show(self):
+        self.path.setText(f"현재: {storage.data_root()}")
+
+    def _pick(self):
+        picked = QFileDialog.getExistingDirectory(self, "모의고사를 저장할 폴더 선택", str(storage.data_root().parent))
+        if picked:
+            p = Path(picked)
+            # 고른 폴더가 이미 data 폴더면 그대로, 아니면 그 안에 data 폴더를 만들어 쓴다
+            self._apply(p if p.name.lower() == "data" or (p / "exams").is_dir() else p / "data")
+
+    def _apply(self, target):
+        old = storage.data_root()
+        new = Path(target) if target else storage.default_data_root()
+        if new.resolve() == old.resolve() and bool(target) == bool(storage.load_config().get("data_dir")):
+            return
+        try:
+            n = storage.set_data_root(target, copy_existing=self.copy.isChecked())
+        except OSError as e:
+            QMessageBox.critical(self, "저장 위치 설정", f"이 폴더에 저장할 수 없습니다.\n{new}\n\n{e}")
+            return
+        self._show()
+        QMessageBox.information(self, "저장 위치 설정", f"저장 위치를 바꿨습니다.\n{storage.data_root()}"
+                                + (f"\n\n모의고사 {n}개를 복사했습니다." if n else ""))
+        self.accept()
+
+
 class HistoryDialog(QDialog):
     def __init__(self, exam: dict, parent=None):
         super().__init__(parent)
@@ -241,13 +313,18 @@ class MainWindow(QMainWindow):
         return storage.load_exam(exam_id)
 
     def open_data_folder(self):
-        folder = storage.DATA_DIR.parent
+        folder = storage.data_root()
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
+    def storage_settings(self):
+        if StorageDialog(self).exec() == QDialog.Accepted:
+            self.go_home()
+
     def import_legacy(self):
-        """예전 버전(EXE 옆 data 폴더)에서 만든 모의고사를 가져온다. 프로그램 폴더, data 폴더, exams 폴더 아무거나 골라도 됨."""
-        picked = QFileDialog.getExistingDirectory(self, "예전 GSAT_Practice 폴더(또는 그 안의 data 폴더) 선택",
+        """다른 위치(예전 버전 폴더, 다른 저장 위치)의 모의고사를 지금 저장 위치로 복사해 온다.
+        프로그램 폴더, data 폴더, exams 폴더 아무거나 골라도 됨."""
+        picked = QFileDialog.getExistingDirectory(self, "모의고사를 가져올 폴더 (GSAT_Practice 폴더 또는 그 안의 data 폴더)",
                                                   str(Path.home()))
         if not picked:
             return
@@ -255,12 +332,12 @@ class MainWindow(QMainWindow):
         candidates = [p / "data", p, p.parent] if p.name != "exams" else [p.parent]
         src = next((c for c in candidates if (c / "exams").is_dir()), None)
         if src is None:
-            QMessageBox.warning(self, "예전 데이터 가져오기", "이 폴더에서 모의고사를 찾지 못했습니다.\n"
-                                                         "예전 GSAT_Practice 폴더나 그 안의 data 폴더를 골라 주세요.")
+            QMessageBox.warning(self, "모의고사 가져오기", "이 폴더에서 모의고사를 찾지 못했습니다.\n"
+                                                       "GSAT_Practice 폴더나 그 안의 data 폴더를 골라 주세요.")
             return
-        n = storage.migrate_legacy_data([src])
+        n = storage.copy_exams(src)
         self.go_home()
-        QMessageBox.information(self, "예전 데이터 가져오기",
+        QMessageBox.information(self, "모의고사 가져오기",
                                 f"모의고사 {n}개를 가져왔습니다." if n else "새로 가져올 모의고사가 없습니다 (이미 모두 있습니다).")
 
     def create_random(self):
@@ -478,6 +555,10 @@ class MainWindow(QMainWindow):
         if not only:
             QMessageBox.information(self, "틀린 문제 다시 풀기", "틀린 문제가 없습니다. 👏")
             return
+        dlg = RetryPickDialog(exam, only, storage.retry_stats(exam["id"], exam), self)
+        if dlg.exec() != QDialog.Accepted or not dlg.selected:
+            return
+        only = dlg.selected
         self.current_exam = exam
         self.exam_page.start_exam(exam, list(only), only=only, base=base.get("file"))
         self.stack.setCurrentWidget(self.exam_page)

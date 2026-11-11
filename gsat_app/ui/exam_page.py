@@ -1,7 +1,6 @@
 """응시 화면 (타이머, OMR 답안지) 과 해설(다시 보기) 화면."""
 from __future__ import annotations
 
-import math
 from datetime import datetime
 
 from PySide6.QtCore import QElapsedTimer, QSettings, Qt, QTimer, Signal
@@ -242,7 +241,7 @@ class ExamPage(QWidget):
     # ------------------------------------------------------------ 응시
     def start_exam(self, exam: dict, section_keys: list[str], only: dict[str, list[int]] | None = None,
                    base: str | None = None):
-        """only: {영역키: [문항 번호]} 를 주면 그 문항만 푼다 (오답 다시 풀기). 시간은 문항 수에 비례."""
+        """only: {영역키: [문항 번호]} 를 주면 그 문항만 시간 제한 없이 푼다 (틀린 문제 다시 풀기)."""
         self.exam = exam
         self.review = False
         self.base = base  # 오답 다시 풀기: 기준이 된 원래 응시 기록 파일
@@ -255,8 +254,7 @@ class ExamPage(QWidget):
                 keep = set(only.get(s["key"], []))
                 qs = [q for q in s["questions"] if q["number"] in keep]
                 if qs:
-                    minutes = max(1, math.ceil(s["minutes"] * len(qs) / len(s["questions"])))
-                    picked.append({**s, "questions": qs, "minutes": minutes})
+                    picked.append({**s, "questions": qs, "minutes": 0})  # 0 = 시간 제한 없음
             sections = picked
         self.sections = sections
         self.answers = {s["key"]: {} for s in self.sections}
@@ -277,14 +275,14 @@ class ExamPage(QWidget):
         self.count_label.setText(f"영역 {self.sec_i + 1} / {len(self.sections)}")
         self.timer_label.setText("")
         self.intro_title.setText(s["name"] + ("  ·  오답 다시 풀기" if self.mode == "retry" else ""))
-        self.intro_info.setText(f"{len(s['questions'])}문항  ·  {s['minutes']}분")
+        self.intro_info.setText(f"{len(s['questions'])}문항  ·  " + (f"{s['minutes']}분" if s["minutes"] else "시간 제한 없음"))
         self.submit_btn.setEnabled(False)
         self.stack.setCurrentIndex(0)
 
     def _begin_section(self):
         s = self.sections[self.sec_i]
         self.questions = s["questions"]
-        self.limit = s["minutes"] * 60
+        self.limit = s["minutes"] * 60 or None  # None: 시간 제한 없음 (걸린 시간만 표시)
         self.omr.build(self.questions)
         self.q_i = 0
         self.section_clock.start()
@@ -300,6 +298,10 @@ class ExamPage(QWidget):
 
     def _on_tick(self):
         if self.review:
+            return
+        if self.limit is None:
+            self.timer_label.setText(f"⏱ {fmt_time(self.section_clock.elapsed() / 1000)}  (제한 없음)")
+            self.timer_label.setStyleSheet("font-size: 22px; font-weight: bold; background: transparent; color:#1d1d1f;")
             return
         remain = self.limit - self.section_clock.elapsed() / 1000
         self.timer_label.setText(f"⏱ {fmt_time(remain)}")
@@ -393,7 +395,8 @@ class ExamPage(QWidget):
         self.tick.stop()
         self._record_time()
         s = self._section()
-        self.elapsed[s["key"]] = min(self.limit, self.section_clock.elapsed() / 1000)
+        spent = self.section_clock.elapsed() / 1000
+        self.elapsed[s["key"]] = spent if self.limit is None else min(self.limit, spent)
         if timeout:
             QMessageBox.information(self, "시간 종료", f"{s['name']} 시간이 끝났습니다.")
         self.sec_i += 1

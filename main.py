@@ -66,13 +66,6 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE)
-    # 예전 버전(EXE 옆 data 폴더)에서 만든 모의고사를 새 위치(사용자 폴더)로 옮긴다
-    try:
-        moved = storage.migrate_legacy_data()
-    except Exception:  # noqa: BLE001
-        moved = 0
-        log_file.write("".join(traceback.format_exc()))
-        log_file.flush()
     win = MainWindow()
     # 노트북 화면(세로 1000 미만)에서는 최대화해서 시작
     screen = app.primaryScreen().availableGeometry()
@@ -80,12 +73,11 @@ def main():
         win.showMaximized()
     else:
         win.show()
-    if moved:
-        QMessageBox.information(win, "데이터 위치 변경",
-                                f"예전 버전에서 만든 모의고사 {moved}개를 새 위치로 옮겼습니다.\n"
-                                f"{storage.DATA_DIR.parent}\n\n"
-                                "이제 새 버전으로 바꿔도 data 폴더를 복사할 필요가 없습니다.\n"
-                                "홈 화면의 '데이터 폴더 열기'로 이 폴더를 열 수 있습니다.")
+    if storage.ADOPTED_V141:
+        QMessageBox.information(win, "저장 위치",
+                                "v1.4.1에서 만든 모의고사가 있는 아래 폴더를 계속 저장 위치로 사용합니다.\n"
+                                f"{storage.data_root()}\n\n"
+                                "프로그램 폴더(data)로 바꾸려면 홈 화면의 '저장 위치 설정'에서 바꿀 수 있습니다.")
     # .gsat 파일을 EXE 아이콘에 끌어다 놓거나 '연결 프로그램'으로 열면 바로 가져오기
     for arg in sys.argv[1:]:
         if arg.lower().endswith(".gsat"):

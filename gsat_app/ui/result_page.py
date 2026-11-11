@@ -101,8 +101,8 @@ class ResultPage(QWidget):
         wrong_btn.clicked.connect(lambda: self.review.emit(self.result, True, None))
         self.retry_btn = QPushButton("틀린 문제 다시 풀기")
         self.retry_btn.setObjectName("primary")
-        self.retry_btn.setToolTip("처음 응시에서 틀렸거나 안 푼 문제를 모아 정답을 가린 채 다시 풉니다.\n"
-                                  "다시 풀어 맞힌 문제도 계속 포함됩니다 (문항별 다시 푼 횟수/맞은 횟수 표시).")
+        self.retry_btn.setToolTip("처음 응시에서 틀렸거나 안 푼 문제 목록에서 풀 문제를 골라 시간 제한 없이 다시 풉니다.\n"
+                                  "다시 풀어 아직 못 맞힌 문제가 기본으로 선택됩니다.")
         self.retry_btn.clicked.connect(lambda: self.retry.emit(self.result))
         key_btn = QPushButton("정답 입력 / 수정")
         key_btn.clicked.connect(lambda: self.edit_key.emit(self.result))
@@ -137,7 +137,7 @@ class ResultPage(QWidget):
             r = self.summary.rowCount()
             self.summary.insertRow(r)
             vals = [s["name"], sc["correct"], sc["wrong"], sc["blank"], f"{sc['rate']:.1f}%",
-                    storage.fmt_rate(sc["attempted_rate"]), f"{fmt_time(rs['elapsed'])} / {fmt_time(rs['limit'])}"]
+                    storage.fmt_rate(sc["attempted_rate"]), f"{fmt_time(rs['elapsed'])} / {fmt_time(rs['limit']) if rs['limit'] else '제한 없음'}"]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(str(v))
                 item.setTextAlignment(Qt.AlignCenter)
@@ -175,7 +175,7 @@ class ResultPage(QWidget):
         vals = [(f"{tot['correct']} / {graded}", f"틀림 {tot['wrong']} · 미응답 {tot['blank']}"),
                 (f"{rate:.1f}%", "안 푼 문제도 틀린 것으로 계산"),
                 (storage.fmt_rate(tot["correct"] / attempted * 100 if attempted else None), f"{attempted}문항 응답"),
-                (fmt_time(elapsed), f"제한 {fmt_time(limit)}")]
+                (fmt_time(elapsed), f"제한 {fmt_time(limit)}" if limit else "시간 제한 없음")]
         for (val, note), (v, n) in zip(self.cards, vals):
             val.setText(v)
             note.setText(n)
