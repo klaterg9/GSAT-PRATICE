@@ -24,6 +24,7 @@ class ResultPage(QWidget):
     review = Signal(dict, bool, object)  # (result, 오답만, (영역키, 번호) | None)
     home = Signal()
     edit_key = Signal(dict)              # 정답 입력/수정
+    retry = Signal(dict)                 # 틀린 문제만 다시 풀기
 
     def __init__(self):
         super().__init__()
@@ -78,8 +79,9 @@ class ResultPage(QWidget):
         hint = QLabel("문항을 더블클릭하면 해당 문제를 다시 볼 수 있습니다.")
         hint.setObjectName("muted")
         lay.addWidget(hint)
-        self.detail = QTableWidget(0, 6)
-        self.detail.setHorizontalHeaderLabels(["영역", "번호", "내 답", "정답", "결과", "풀이 시간"])
+        self.detail = QTableWidget(0, 7)
+        self.detail.setHorizontalHeaderLabels(["영역", "번호", "내 답", "정답", "결과", "풀이 시간", "다시 푼 기록"])
+        self.detail.horizontalHeaderItem(6).setToolTip("틀린 문제 다시 풀기에서 이 문제를 푼 횟수와 맞힌 횟수")
         self.detail.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.detail.verticalHeader().setVisible(False)
         self.detail.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -96,8 +98,12 @@ class ResultPage(QWidget):
         all_btn = QPushButton("전체 해설 보기")
         all_btn.clicked.connect(lambda: self.review.emit(self.result, False, None))
         wrong_btn = QPushButton("오답만 다시 보기")
-        wrong_btn.setObjectName("primary")
         wrong_btn.clicked.connect(lambda: self.review.emit(self.result, True, None))
+        self.retry_btn = QPushButton("틀린 문제 다시 풀기")
+        self.retry_btn.setObjectName("primary")
+        self.retry_btn.setToolTip("처음 응시에서 틀렸거나 안 푼 문제를 모아 정답을 가린 채 다시 풉니다.\n"
+                                  "다시 풀어 맞힌 문제도 계속 포함됩니다 (문항별 다시 푼 횟수/맞은 횟수 표시).")
+        self.retry_btn.clicked.connect(lambda: self.retry.emit(self.result))
         key_btn = QPushButton("정답 입력 / 수정")
         key_btn.clicked.connect(lambda: self.edit_key.emit(self.result))
         btns.addWidget(home)
@@ -105,14 +111,16 @@ class ResultPage(QWidget):
         btns.addStretch()
         btns.addWidget(all_btn)
         btns.addWidget(wrong_btn)
+        btns.addWidget(self.retry_btn)
         lay.addLayout(btns)
         self._rows: list[tuple[str, int]] = []
 
     def show_result(self, exam: dict, result: dict):
         self.result = result
         self.title.setText(f"결과 — {exam['name']}")
-        self.subtitle.setText(f"{result['date'].replace('T', ' ')}  ·  {'실전(전 영역)' if result['mode'] == 'full' else '영역 연습'}")
+        self.subtitle.setText(f"{result['date'].replace('T', ' ')}  ·  {storage.MODE_LABELS.get(result['mode'], '영역 연습')}")
         sections = {s["key"]: s for s in exam["sections"]}
+        stats = storage.retry_stats(exam["id"], exam)
 
         self.summary.setRowCount(0)
         self.detail.setRowCount(0)
@@ -122,6 +130,7 @@ class ResultPage(QWidget):
             s = sections.get(rs["key"])
             if not s:
                 continue
+            s = storage.result_section(s, rs)
             sc = storage.score_section(s, rs["answers"])
             for k in tot:
                 tot[k] += sc[k]
@@ -148,7 +157,8 @@ class ResultPage(QWidget):
                 r = self.detail.rowCount()
                 self.detail.insertRow(r)
                 vals = [s["name"], q["number"], circled(mine) if mine else "-", circled(key) if key else "-",
-                        mark, fmt_duration(rs["times"].get(num, 0))]  # 그 문제 화면에 머문 시간
+                        mark, fmt_duration(rs["times"].get(num, 0)),  # 그 문제 화면에 머문 시간
+                        storage.fmt_retry(stats.get((s["key"], q["number"]))).replace("다시 푼 ", "") or "-"]
                 for c, v in enumerate(vals):
                     item = QTableWidgetItem(str(v))
                     item.setTextAlignment(Qt.AlignCenter)
@@ -184,6 +194,12 @@ class ResultPage(QWidget):
                 f.setBold(True)
                 item.setFont(f)
                 self.summary.setItem(r, c, item)
+
+        base = storage.retry_base(exam["id"], result)
+        n_wrong = sum(len(storage.wrong_numbers(sections[rs["key"]], rs))
+                      for rs in base["sections"] if rs["key"] in sections)
+        self.retry_btn.setEnabled(n_wrong > 0)
+        self.retry_btn.setText(f"틀린 문제 다시 풀기 ({n_wrong})" if n_wrong else "틀린 문제 없음")
 
         # 요약 표 높이를 행 수에 딱 맞춘다 (빈 공간 없이)
         self.summary.resizeRowsToContents()

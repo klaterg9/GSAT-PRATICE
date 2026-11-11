@@ -14,6 +14,7 @@ from .. import storage
 from .answer_key import AnswerKeyDialog, AnswerKeyPage
 from .common import ACCENT
 from .create_dialog import CreateDialog
+from .random_dialog import RandomDialog
 from .exam_page import ExamPage
 from ..pages import PdfPages
 from .region_editor import RegionEditor, has_regions, max_page_used, sections_from_exam
@@ -59,6 +60,7 @@ class HomePage(QWidget):
             (None, "응시"),
             ("실전 응시 (전 영역)", lambda: self.win.take_exam(full=True), "primary"),
             ("영역 선택 응시", lambda: self.win.take_exam(full=False)),
+            ("랜덤 모의고사 만들기", self.win.create_random),
             ("응시 기록", self.win.show_history),
             (None, "편집"),
             ("정답 입력 / 수정", self.win.edit_answers),
@@ -100,17 +102,20 @@ class HomePage(QWidget):
             if results:
                 r = results[0]
                 sec = {s["key"]: s for s in exam["sections"]}
-                c = sum(storage.score_section(sec[x["key"]], x["answers"])["correct"]
+                c = sum(storage.score_section(storage.result_section(sec[x["key"]], x), x["answers"])["correct"]
                         for x in r["sections"] if x["key"] in sec)
-                n = sum(len(sec[x["key"]]["questions"]) for x in r["sections"] if x["key"] in sec)
-                last = f"최근 응시 {r['date'][:10]} · {c}/{n} · 총 {len(results)}회"
+                n = sum(len(storage.result_section(sec[x["key"]], x)["questions"])
+                        for x in r["sections"] if x["key"] in sec)
+                kind = " (오답)" if r.get("mode") == "retry" else ""
+                last = f"최근 응시{kind} {r['date'][:10]} · {c}/{n} · 총 {len(results)}회"
             total = sum(len(s["questions"]) for s in exam["sections"])
             keyed = sum(1 for s in exam["sections"] for q in s["questions"] if q.get("answer"))
             key_info = "정답 입력 완료" if total and keyed == total else f"정답 {keyed}/{total} 입력"
             item = QListWidgetItem()
             item.setData(Qt.UserRole, exam["id"])
             item.setToolTip("더블클릭하면 실전 응시를 시작합니다")
-            card = _exam_card(exam["name"], parts, key_info, bool(total) and keyed == total, last)
+            title = f"🎲 {exam['name']}" if exam.get("random") else exam["name"]
+            card = _exam_card(title, parts, key_info, bool(total) and keyed == total, last)
             item.setSizeHint(card.sizeHint())
             self.list.addItem(item)
             self.list.setItemWidget(item, card)
@@ -119,6 +124,12 @@ class HomePage(QWidget):
         self.empty.setVisible(not has)
         if has:
             self.list.setCurrentRow(0)
+
+    def select(self, exam_id: str):
+        for i in range(self.list.count()):
+            if self.list.item(i).data(Qt.UserRole) == exam_id:
+                self.list.setCurrentRow(i)
+                return
 
     def selected_id(self) -> str | None:
         item = self.list.currentItem()
@@ -175,9 +186,9 @@ class HistoryDialog(QDialog):
             scores = []
             for x in res["sections"]:
                 if x["key"] in sec:
-                    sc = storage.score_section(sec[x["key"]], x["answers"])
+                    sc = storage.score_section(storage.result_section(sec[x["key"]], x), x["answers"])
                     scores.append(f"{x['name'][:2]} {sc['correct']}/{sc['total']}")
-            for c, v in enumerate([res["date"].replace("T", " "), "실전" if res["mode"] == "full" else "영역",
+            for c, v in enumerate([res["date"].replace("T", " "), storage.MODE_SHORT.get(res["mode"], "영역"),
                                    "  ".join(scores)]):
                 table.setItem(r, c, QTableWidgetItem(v))
         table.cellDoubleClicked.connect(lambda r, _c: self._pick(r))
@@ -211,6 +222,7 @@ class MainWindow(QMainWindow):
         self.exam_page.closed.connect(self._on_exam_closed)
         self.result_page.home.connect(self.go_home)
         self.result_page.review.connect(self._review)
+        self.result_page.retry.connect(self._retry)
         self.current_exam: dict | None = None
         self.go_home()
 
@@ -225,6 +237,20 @@ class MainWindow(QMainWindow):
             return None
         return storage.load_exam(exam_id)
 
+    def create_random(self):
+        if not storage.list_exams():
+            QMessageBox.information(self, "랜덤 모의고사", "먼저 모의고사를 하나 이상 만들어 주세요.")
+            return
+        dlg = RandomDialog(self)
+        if dlg.exec() != QDialog.Accepted or not dlg.exam:
+            return
+        self.go_home()
+        self.home.select(dlg.exam["id"])
+        n = sum(len(s["questions"]) for s in dlg.exam["sections"])
+        msg = f"'{dlg.exam['name']}' ({n}문항)을 만들었습니다.\n바로 풀어볼까요?"
+        if QMessageBox.question(self, "랜덤 모의고사", msg) == QMessageBox.Yes:
+            self.take_exam(full=True)
+
     def create_exam(self):
         dlg = CreateDialog(self)
         if dlg.exec() == QDialog.Accepted:
@@ -233,6 +259,10 @@ class MainWindow(QMainWindow):
     def edit_exam(self):
         exam = self._selected_exam()
         if not exam:
+            return
+        if exam.get("random"):
+            QMessageBox.information(self, "문항 영역 수정", "랜덤 모의고사는 다른 모의고사에서 문항을 모은 것이라 영역을 수정할 수 없습니다.\n"
+                                                         "원래 모의고사에서 수정하세요. 정답은 '정답 입력 / 수정'에서 고칠 수 있습니다.")
             return
         if not has_regions(exam):
             QMessageBox.information(self, "문항 영역 수정", "이 모의고사에는 문항 영역 정보가 없어 수정할 수 없습니다.\n"
@@ -384,9 +414,9 @@ class MainWindow(QMainWindow):
         """응시 완료 -> 정답이 비어 있으면 정답 입력 화면, 다 있으면 바로 결과"""
         self.current_exam = storage.load_exam(self.current_exam["id"])
         self.last_result = result
-        keys = {s["key"] for s in result["sections"]}
-        missing = any(not q.get("answer") for s in self.current_exam["sections"] if s["key"] in keys
-                      for q in s["questions"])
+        by_key = {rs["key"]: rs for rs in result["sections"]}
+        missing = any(not q.get("answer") for s in self.current_exam["sections"] if s["key"] in by_key
+                      for q in storage.result_section(s, by_key[s["key"]])["questions"])
         if missing:
             self.key_page.start(self.current_exam, result)
             self.stack.setCurrentWidget(self.key_page)
@@ -410,6 +440,21 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.result_page)
         else:
             self.go_home()
+
+    def _retry(self, result: dict):
+        """결과 화면 -> 처음 응시에서 틀렸거나 안 푼 문제를 모아서 다시 풀기.
+        다시 푼 기록에서 눌러도 처음 응시 기준이라, 한 번 맞힌 문제도 계속 다시 풀 수 있다."""
+        exam = storage.load_exam(self.current_exam["id"])
+        sec = {s["key"]: s for s in exam["sections"]}
+        base = storage.retry_base(exam["id"], result)
+        only = {rs["key"]: storage.wrong_numbers(sec[rs["key"]], rs) for rs in base["sections"] if rs["key"] in sec}
+        only = {k: v for k, v in only.items() if v}
+        if not only:
+            QMessageBox.information(self, "틀린 문제 다시 풀기", "틀린 문제가 없습니다. 👏")
+            return
+        self.current_exam = exam
+        self.exam_page.start_exam(exam, list(only), only=only, base=base.get("file"))
+        self.stack.setCurrentWidget(self.exam_page)
 
     def _review(self, result: dict, only_wrong: bool, focus):
         if self.exam_page.start_review(self.current_exam, result, only_wrong, focus):

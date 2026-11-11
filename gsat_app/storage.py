@@ -176,7 +176,11 @@ def delete_exam(exam_id: str) -> None:
 def save_result(exam_id: str, result: dict) -> None:
     folder = exam_dir(exam_id) / "results"
     folder.mkdir(parents=True, exist_ok=True)
-    name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".json"
+    stem = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name, n = stem + ".json", 1
+    while (folder / name).exists():  # 같은 초에 저장된 기록을 덮어쓰지 않도록
+        n += 1
+        name = f"{stem}_{n}.json"
     result["file"] = name
     (folder / name).write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -247,6 +251,66 @@ def import_exam(src: Path) -> dict:
     return exam
 
 
+MODE_LABELS = {"full": "실전(전 영역)", "section": "영역 연습", "retry": "오답 다시 풀기"}
+MODE_SHORT = {"full": "실전", "section": "영역", "retry": "오답"}
+
+
+def result_section(section: dict, rs: dict) -> dict:
+    """응시 기록의 한 영역에 실제로 나온 문항만 남긴 영역 (오답 다시 풀기는 일부 문항만 풂)"""
+    nums = rs.get("numbers")
+    if not nums:
+        return section
+    keep = set(nums)
+    return {**section, "questions": [q for q in section["questions"] if q["number"] in keep]}
+
+
+def load_result(exam_id: str, file: str) -> dict | None:
+    path = exam_dir(exam_id) / "results" / file
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def retry_base(exam_id: str, result: dict) -> dict:
+    """오답 다시 풀기의 기준이 되는 원래 응시 기록 (다시 푼 기록에서 또 누르면 처음 응시 기준)"""
+    if result.get("mode") == "retry" and result.get("base"):
+        base = load_result(exam_id, result["base"])
+        if base is not None:
+            return base
+    return result
+
+
+def retry_stats(exam_id: str, exam: dict) -> dict[tuple[str, int], tuple[int, int]]:
+    """문항별 (다시 푼 횟수, 그중 맞힌 횟수). 오답 다시 풀기 기록만 센다."""
+    answers = {(s["key"], q["number"]): q.get("answer") for s in exam["sections"] for q in s["questions"]}
+    stats: dict[tuple[str, int], list[int]] = {}
+    for r in list_results(exam_id):
+        if r.get("mode") != "retry":
+            continue
+        for rs in r["sections"]:
+            for n in rs.get("numbers", []):
+                key = answers.get((rs["key"], n))
+                st = stats.setdefault((rs["key"], n), [0, 0])
+                st[0] += 1
+                if key is not None and rs["answers"].get(str(n)) == key:
+                    st[1] += 1
+    return {k: (a, b) for k, (a, b) in stats.items()}
+
+
+def fmt_retry(st: tuple[int, int] | None) -> str:
+    return f"다시 푼 {st[0]}회 · 맞음 {st[1]}회" if st else ""
+
+
+def wrong_numbers(section: dict, rs: dict) -> list[int]:
+    """그 응시에서 틀렸거나 안 푼 문항 번호 (정답이 입력된 문항만)"""
+    out = []
+    for q in result_section(section, rs)["questions"]:
+        if q.get("answer") is not None and rs["answers"].get(str(q["number"])) != q["answer"]:
+            out.append(q["number"])
+    return out
+
+
 def score_section(section: dict, answers: dict) -> dict:
     """answers: {"번호(str)": 선택} -> 채점 요약"""
     correct = wrong = blank = no_key = 0
@@ -269,3 +333,87 @@ def score_section(section: dict, answers: dict) -> dict:
 
 def fmt_rate(rate: float | None) -> str:
     return "-" if rate is None else f"{rate:.1f}%"
+
+
+# ---------------------------------------------------------------- 랜덤 모의고사
+def question_pool(exam_ids: list[str], answered_only: bool = True) -> dict[str, list[tuple[dict, dict, dict]]]:
+    """영역 이름별 문항 모음: {영역 이름: [(시험, 영역, 문항), ...]} (시험 순서 -> 영역 순서대로)"""
+    pool: dict[str, list[tuple[dict, dict, dict]]] = {}
+    for eid in exam_ids:
+        try:
+            exam = load_exam(eid)
+        except (OSError, json.JSONDecodeError):
+            continue
+        for s in exam["sections"]:
+            items = pool.setdefault(s["name"].strip(), [])
+            for q in s["questions"]:
+                if q.get("image_full") or q.get("image"):
+                    if not answered_only or q.get("answer") is not None:
+                        items.append((exam, s, q))
+    return {k: v for k, v in pool.items() if v}
+
+
+def minutes_per_question(items: list[tuple[dict, dict, dict]]) -> float:
+    """원래 시험들의 문항당 평균 시간(분)"""
+    seen = {}
+    for exam, s, _q in items:
+        seen[(exam["id"], s["key"])] = (s.get("minutes", 15), len(s["questions"]) or 1)
+    total_min = sum(m for m, _ in seen.values())
+    total_q = sum(n for _, n in seen.values())
+    return total_min / total_q if total_q else 0.5
+
+
+def build_random_exam(name: str, plan: list[dict], exam_ids: list[str], answered_only: bool = True,
+                      rng=None) -> dict:
+    """plan: [{"name": 영역 이름, "count": 문항 수, "minutes": 시간}] -> 문항을 무작위로 골라 새 모의고사로 저장.
+    문항 이미지(와 연결된 보기)를 새 시험 폴더로 복사하므로 원래 시험을 지워도 그대로 풀 수 있다."""
+    import random
+    rng = rng or random.Random()
+    pool = question_pool(exam_ids, answered_only)
+    exam_id, folder = new_exam_dir()
+    sections = []
+    try:
+        for i, p in enumerate(plan, start=1):
+            items = pool.get(p["name"], [])
+            n = min(int(p["count"]), len(items))
+            if n <= 0:
+                continue
+            key = f"s{i}"
+            (folder / key).mkdir()
+            picked = rng.sample(items, n)
+            passages, pmap, qs = [], {}, []
+            for num, (exam, s, q) in enumerate(picked, start=1):
+                src = section_dir(exam["id"], s)
+                new_q = {k: v for k, v in q.items() if k not in ("regions", "passage")}
+                new_q["number"] = num
+                new_q["num_choices"] = q.get("num_choices") or s.get("choices") or 5
+                for field, prefix in (("image_full", "q"), ("image", "t")):
+                    if q.get(field):
+                        dest = f"{prefix}{num:03d}.png"
+                        shutil.copyfile(src / q[field], folder / key / dest)
+                        new_q[field] = dest
+                pid = q.get("passage")
+                psg = next((x for x in s.get("passages", []) if x.get("id") == pid), None) if pid else None
+                if psg and psg.get("image") and (src / psg["image"]).exists():
+                    ref = (exam["id"], s["key"], pid)
+                    if ref not in pmap:
+                        k = len(passages) + 1
+                        shutil.copyfile(src / psg["image"], folder / key / f"p{k:02d}.png")
+                        pmap[ref] = f"p{k}"
+                        passages.append({"id": f"p{k}", "label": psg.get("label", f"보기 {k}"),
+                                         "image": f"p{k:02d}.png", "range": None})
+                    new_q["passage"] = pmap[ref]
+                new_q["origin"] = {"exam": exam["id"], "exam_name": exam["name"], "section": s["key"],
+                                   "number": q["number"]}
+                qs.append(new_q)
+            sections.append({"key": key, "name": p["name"], "minutes": max(1, int(p["minutes"])),
+                             "expected": n, "passages": passages, "questions": qs})
+        if not sections:
+            raise ValueError("고를 수 있는 문항이 없습니다.")
+        exam = {"id": exam_id, "name": name, "created": datetime.now().isoformat(timespec="seconds"),
+                "random": True, "sources": exam_ids, "sections": sections}
+        save_exam(exam)
+        return exam
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise

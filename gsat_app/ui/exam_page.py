@@ -1,6 +1,7 @@
 """응시 화면 (타이머, OMR 답안지) 과 해설(다시 보기) 화면."""
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from PySide6.QtCore import QElapsedTimer, QSettings, Qt, QTimer, Signal
@@ -239,15 +240,32 @@ class ExamPage(QWidget):
         self.settings.setValue("zoom", z)
 
     # ------------------------------------------------------------ 응시
-    def start_exam(self, exam: dict, section_keys: list[str]):
+    def start_exam(self, exam: dict, section_keys: list[str], only: dict[str, list[int]] | None = None,
+                   base: str | None = None):
+        """only: {영역키: [문항 번호]} 를 주면 그 문항만 푼다 (오답 다시 풀기). 시간은 문항 수에 비례."""
         self.exam = exam
         self.review = False
+        self.base = base  # 오답 다시 풀기: 기준이 된 원래 응시 기록 파일
+        self.stats = storage.retry_stats(exam["id"], exam) if only is not None else {}
         self.exam_path = storage.exam_dir(exam["id"])
-        self.sections = [s for s in exam["sections"] if s["key"] in section_keys and s["questions"]]
+        sections = [s for s in exam["sections"] if s["key"] in section_keys and s["questions"]]
+        if only is not None:
+            picked = []
+            for s in sections:
+                keep = set(only.get(s["key"], []))
+                qs = [q for q in s["questions"] if q["number"] in keep]
+                if qs:
+                    minutes = max(1, math.ceil(s["minutes"] * len(qs) / len(s["questions"])))
+                    picked.append({**s, "questions": qs, "minutes": minutes})
+            sections = picked
+        self.sections = sections
         self.answers = {s["key"]: {} for s in self.sections}
         self.times = {s["key"]: {} for s in self.sections}
         self.elapsed: dict[str, float] = {}
-        self.mode = "full" if len(self.sections) == len(exam["sections"]) else "section"
+        if only is not None:
+            self.mode = "retry"
+        else:
+            self.mode = "full" if len(self.sections) == len(exam["sections"]) else "section"
         self.sec_i = 0
         self.quit_btn.setText("그만두기")
         self.submit_btn.show()
@@ -258,7 +276,7 @@ class ExamPage(QWidget):
         self.section_label.setText(f"{self.exam['name']}")
         self.count_label.setText(f"영역 {self.sec_i + 1} / {len(self.sections)}")
         self.timer_label.setText("")
-        self.intro_title.setText(s["name"])
+        self.intro_title.setText(s["name"] + ("  ·  오답 다시 풀기" if self.mode == "retry" else ""))
         self.intro_info.setText(f"{len(s['questions'])}문항  ·  {s['minutes']}분")
         self.submit_btn.setEnabled(False)
         self.stack.setCurrentIndex(0)
@@ -307,7 +325,11 @@ class ExamPage(QWidget):
         ans = self.answers[s["key"]]
         self.section_label.setText(s["name"])
         self.count_label.setText(f"응답 {len(ans)} / {len(self.questions)}")
-        self.view.show_question(self.exam_path, s, q, self.q_i, len(self.questions), ans.get(str(q["number"])))
+        note = storage.fmt_retry(self.stats.get((s["key"], q["number"]))) if self.mode == "retry" else ""
+        if self.mode == "retry" and not note:
+            note = "처음 다시 푸는 문제"
+        self.view.show_question(self.exam_path, s, q, self.q_i, len(self.questions), ans.get(str(q["number"])),
+                                note=note)
         self.omr.update_marks(self.questions, ans, self.q_i)
         self.prev_btn.setEnabled(self.q_i > 0)
         self.next_btn.setEnabled(self.q_i < len(self.questions) - 1)
@@ -381,9 +403,11 @@ class ExamPage(QWidget):
         result = {
             "exam_id": self.exam["id"], "exam_name": self.exam["name"],
             "date": datetime.now().isoformat(timespec="seconds"), "mode": self.mode,
+            **({"base": self.base} if self.mode == "retry" and self.base else {}),
             "sections": [{"key": s["key"], "name": s["name"], "answers": self.answers[s["key"]],
                           "times": {k: round(v, 1) for k, v in self.times[s["key"]].items()},
-                          "elapsed": round(self.elapsed.get(s["key"], 0), 1), "limit": s["minutes"] * 60}
+                          "elapsed": round(self.elapsed.get(s["key"], 0), 1), "limit": s["minutes"] * 60,
+                          **({"numbers": [q["number"] for q in s["questions"]]} if self.mode == "retry" else {})}
                          for s in self.sections],
         }
         storage.save_result(self.exam["id"], result)
@@ -403,11 +427,13 @@ class ExamPage(QWidget):
         self.review = True
         self.exam_path = storage.exam_dir(exam["id"])
         self.result_answers = {s["key"]: s["answers"] for s in result["sections"]}
-        keys = [s["key"] for s in result["sections"]]
+        by_key = {rs["key"]: rs for rs in result["sections"]}
+        # 오답 다시 풀기 기록은 그때 푼 문항만 보여준다
+        self.review_stats = storage.retry_stats(exam["id"], exam)
+        self._review_secs = {s["key"]: storage.result_section(s, by_key[s["key"]])
+                             for s in exam["sections"] if s["key"] in by_key}
         self.review_items = []
-        for s in exam["sections"]:
-            if s["key"] not in keys:
-                continue
+        for s in self._review_secs.values():
             for q in s["questions"]:
                 mine = self.result_answers[s["key"]].get(str(q["number"]))
                 if only_wrong and (q.get("answer") is None or mine == q.get("answer")):
@@ -432,7 +458,7 @@ class ExamPage(QWidget):
         return True
 
     def _review_index(self, section_key, row):
-        s = next(s for s in self.exam["sections"] if s["key"] == section_key)
+        s = self._review_secs[section_key]
         q = s["questions"][row]
         for i, (rs, rq) in enumerate(self.review_items):
             if rs["key"] == section_key and rq is q:
@@ -450,7 +476,8 @@ class ExamPage(QWidget):
         self.section_label.setText(s["name"])
         self.count_label.setText(f"{self.r_i + 1} / {len(self.review_items)}")
         self.view.show_question(self.exam_path, s, q, idx, len(s["questions"]),
-                                answers.get(str(q["number"])), show_answer=True)
+                                answers.get(str(q["number"])), show_answer=True,
+                                note=storage.fmt_retry(self.review_stats.get((s["key"], q["number"]))))
         self.omr.update_marks(s["questions"], answers, idx, show_answer=True, enabled=self._review_rows)
         self.prev_btn.setEnabled(self.r_i > 0)
         self.next_btn.setEnabled(self.r_i < len(self.review_items) - 1)

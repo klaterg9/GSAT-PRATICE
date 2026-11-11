@@ -227,13 +227,15 @@ class QuestionView(QScrollArea):
         self.lay.addWidget(box)
 
     def show_question(self, exam_path: Path, section: dict, q: dict, index: int, total: int,
-                      selected: int | None = None, show_answer: bool = False) -> None:
-        self._last = (exam_path, section, q, index, total, selected, show_answer)
+                      selected: int | None = None, show_answer: bool = False, note: str = "") -> None:
+        self._last = (exam_path, section, q, index, total, selected, show_answer, note)
         self.clear()
         z = self.zoom
         head = QLabel(f"<span style='font-size:26px; font-weight:800'>{q['number']}번</span>"
                       f"<span style='font-size:15px; color:#555'>&nbsp;/ {total}</span>"
-                      f"<span style='font-size:13px; color:#999'>&nbsp;&nbsp;{section['name']} · {index + 1}번째</span>")
+                      f"<span style='font-size:13px; color:#999'>&nbsp;&nbsp;{section['name']} · {index + 1}번째</span>"
+                      + (f"&nbsp;&nbsp;<span style='font-size:13px; color:#a15c00; background:#fdf1e0'>"
+                         f"&nbsp;{note}&nbsp;</span>" if note else ""))
         self.lay.addWidget(head)
         self._add_passage(exam_path, section, q)
 
