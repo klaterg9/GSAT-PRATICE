@@ -74,7 +74,8 @@ git push origin v1.2.0
 ```
 
 - Actions 탭에서 **Run workflow**로 수동 실행하면 배포 없이 빌드만 하고, 결과물은 실행 기록의 Artifacts에서 받을 수 있습니다.
-- 배포 설명은 `.github/release_notes.md`를 사용합니다.
+- 배포 설명은 `.github/release_notes.md`(공통 안내)를 사용합니다.
+  태그를 올리기 전에 `.github/changes/v1.4.0.md`처럼 **그 버전의 변경 사항 파일**을 만들어 커밋하면 배포 페이지 맨 위에 자동으로 들어갑니다.
 
 ## 직접 빌드
 

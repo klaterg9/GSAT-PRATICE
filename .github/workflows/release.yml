@@ -82,8 +82,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           files="artifacts/windows/GSAT_Practice-windows.zip artifacts/macos/GSAT_Practice-mac-AppleSilicon.zip"
+          sh .github/make_notes.sh "$GITHUB_REF_NAME" > notes.md
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" $files --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" $files --title "GSAT 모의고사 $GITHUB_REF_NAME" --notes-file .github/release_notes.md
+            gh release create "$GITHUB_REF_NAME" $files --title "GSAT 모의고사 $GITHUB_REF_NAME" --notes-file notes.md
           fi
