@@ -5,7 +5,8 @@ import json
 import zipfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QStackedWidget,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -69,6 +70,8 @@ class HomePage(QWidget):
             ("+ 새 모의고사 만들기", self.win.create_exam),
             ("내보내기 (파일로 공유)", self.win.export_exam),
             ("가져오기", self.win.import_exam),
+            ("데이터 폴더 열기", self.win.open_data_folder),
+            ("예전 버전 데이터 가져오기", self.win.import_legacy),
         ]
         for text, fn, *rest in buttons:
             if text is None:
@@ -236,6 +239,29 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "안내", "먼저 모의고사를 선택하세요. 없으면 '새 모의고사 만들기'를 눌러주세요.")
             return None
         return storage.load_exam(exam_id)
+
+    def open_data_folder(self):
+        folder = storage.DATA_DIR.parent
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def import_legacy(self):
+        """예전 버전(EXE 옆 data 폴더)에서 만든 모의고사를 가져온다. 프로그램 폴더, data 폴더, exams 폴더 아무거나 골라도 됨."""
+        picked = QFileDialog.getExistingDirectory(self, "예전 GSAT_Practice 폴더(또는 그 안의 data 폴더) 선택",
+                                                  str(Path.home()))
+        if not picked:
+            return
+        p = Path(picked)
+        candidates = [p / "data", p, p.parent] if p.name != "exams" else [p.parent]
+        src = next((c for c in candidates if (c / "exams").is_dir()), None)
+        if src is None:
+            QMessageBox.warning(self, "예전 데이터 가져오기", "이 폴더에서 모의고사를 찾지 못했습니다.\n"
+                                                         "예전 GSAT_Practice 폴더나 그 안의 data 폴더를 골라 주세요.")
+            return
+        n = storage.migrate_legacy_data([src])
+        self.go_home()
+        QMessageBox.information(self, "예전 데이터 가져오기",
+                                f"모의고사 {n}개를 가져왔습니다." if n else "새로 가져올 모의고사가 없습니다 (이미 모두 있습니다).")
 
     def create_random(self):
         if not storage.list_exams():

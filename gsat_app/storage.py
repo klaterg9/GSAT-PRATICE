@@ -18,34 +18,76 @@ from datetime import datetime
 from pathlib import Path
 
 
+APP_DIR_NAME = "GSAT모의고사"
+
+
+def _user_data_root() -> Path:
+    """사용자 폴더의 데이터 위치 (프로그램 위치와 상관없이 항상 같은 곳)"""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME / "data"
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(base) / APP_DIR_NAME / "data"
+
+
 def _data_root() -> Path:
     """데이터 폴더.
 
     - 소스로 실행: 프로젝트 폴더/data
-    - EXE 로 실행: EXE 옆 data 폴더 (USB 등으로 통째로 옮기기 쉬움).
-      EXE 가 Program Files 처럼 쓰기 금지된 곳에 있으면 %LOCALAPPDATA%/GSAT모의고사/data
-    - 맥 앱으로 실행: ~/Library/Application Support/GSAT모의고사/data
-      (.app 안에 저장하면 앱을 업데이트할 때 지워지고 서명도 깨진다)
+    - EXE / 맥 앱으로 실행: 사용자 폴더
+        Windows: %LOCALAPPDATA%/GSAT모의고사/data
+        맥: ~/Library/Application Support/GSAT모의고사/data
+      예전(v1.4.0 이하) Windows 버전은 EXE 옆 data 폴더에 저장했는데, 새 버전으로 바꿀 때마다 data 를 복사해야 하고
+      OneDrive 폴더에 두면 동기화 때문에 저장이 실패했다. 예전 데이터는 처음 실행할 때 자동으로 옮긴다
+      (migrate_legacy_data).
     """
     if os.environ.get("GSAT_DATA_DIR"):  # 테스트 등에서 다른 폴더를 쓰고 싶을 때
         return Path(os.environ["GSAT_DATA_DIR"])
     if not getattr(sys, "frozen", False):
         return Path(__file__).resolve().parent.parent / "data"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "GSAT모의고사" / "data"
-    beside = Path(sys.executable).resolve().parent / "data"
-    try:
-        beside.mkdir(parents=True, exist_ok=True)
-        probe = beside / ".write_test"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
-        return beside
-    except OSError:
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home())
-        return base / "GSAT모의고사" / "data"
+    return _user_data_root()
 
 
 DATA_DIR = _data_root() / "exams"
+
+
+def legacy_data_dirs() -> list[Path]:
+    """예전 버전이 쓰던 EXE 옆 data 폴더 (지금 EXE 폴더, 그리고 EXE 하나짜리 버전이 쓰던 상위 폴더)"""
+    if not getattr(sys, "frozen", False) or sys.platform == "darwin" or os.environ.get("GSAT_DATA_DIR"):
+        return []
+    here = Path(sys.executable).resolve().parent
+    return [d for d in (here / "data", here.parent / "data") if (d / "exams").is_dir()]
+
+
+def migrate_legacy_data(sources: list[Path] | None = None) -> int:
+    """예전 위치의 모의고사를 지금 데이터 폴더로 복사한다. 이미 있는 시험(같은 폴더 이름)은 건너뛴다.
+    예전 폴더는 지우지 않고 '옮겨졌습니다' 안내 파일만 남긴다. 옮긴 시험 수를 돌려준다."""
+    sources = legacy_data_dirs() if sources is None else sources
+    moved = 0
+    for old in sources:
+        old_exams = old / "exams"
+        if not old_exams.is_dir() or old_exams.resolve() == DATA_DIR.resolve():
+            continue
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        for d in sorted(old_exams.iterdir()):
+            if not d.is_dir() or not (d / "exam.json").exists() or (DATA_DIR / d.name).exists():
+                continue
+            tmp = DATA_DIR / f".{d.name}.moving"
+            shutil.rmtree(tmp, ignore_errors=True)
+            try:
+                shutil.copytree(d, tmp)
+                tmp.rename(DATA_DIR / d.name)
+                moved += 1
+            except OSError:
+                shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            (old / "옮겨졌습니다.txt").write_text(
+                "v1.4.1부터 모의고사와 응시 기록은 아래 폴더에 저장됩니다. 이 폴더의 모의고사는 그곳으로 복사되었습니다.\n"
+                f"{DATA_DIR.parent}\n\n"
+                "프로그램 홈 화면의 '데이터 폴더 열기'로 열 수 있습니다. 이 data 폴더는 지워도 됩니다.\n",
+                encoding="utf-8")
+        except OSError:
+            pass
+    return moved
 
 DEFAULT_SECTIONS = [
     {"name": "수리영역", "count": 40, "minutes": 15},

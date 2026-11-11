@@ -3,7 +3,7 @@
 PDF 모의고사(텍스트 PDF, 제본 스캔본, 펼침면 스캔본)에서 문항 영역을 직접 선택해 실전처럼 풀어보는 프로그램입니다.
 
 **📥 다운로드:** [Releases](https://github.com/klaterg9/GSAT-PRATICE/releases/latest)에서 받아 바로 실행하세요 (Python 설치 불필요).
-- Windows 10/11 (64비트): `GSAT_Practice-windows.zip` → 압축을 풀고 폴더 안의 `GSAT_Practice.exe` 실행 (만든 모의고사는 폴더 안 `data`에 저장되니, 옮길 때는 폴더째)
+- Windows 10/11 (64비트): `GSAT_Practice-windows.zip` → 압축을 풀고 폴더 안의 `GSAT_Practice.exe` 실행 (만든 모의고사는 사용자 폴더에 저장되어, 새 버전으로 바꿔도 그대로 남습니다)
 - macOS (Apple Silicon, M1 이후): `GSAT_Practice-mac-AppleSilicon.zip` → 처음 열 때 경고가 나오면 아래 [macOS에서 처음 열기](#macos에서-처음-열기) 참고
 
 ## ⚠️ 저작권 안내
@@ -66,7 +66,16 @@ Apple 개발자 서명이 없는 앱이라 처음 열 때 "Apple에서 확인할
    (macOS 14 이하는 앱을 오른쪽 클릭 → **열기**도 됩니다.)
 3. 또는 터미널에서 `xattr -dr com.apple.quarantine /Applications/GSAT_Practice.app`
 
-맥에서는 데이터가 `~/Library/Application Support/GSAT모의고사/data`에 저장됩니다.
+## 데이터 저장 위치
+
+- Windows: `%LOCALAPPDATA%\GSAT모의고사\data` (예: `C:\Users\이름\AppData\Local\GSAT모의고사\data`)
+- 맥: `~/Library/Application Support/GSAT모의고사/data`
+- 프로그램 위치와 상관없이 항상 같은 곳이라 새 버전으로 바꿔도 모의고사가 그대로 남고, OneDrive 동기화 영향을 받지 않습니다.
+- 홈 화면의 **데이터 폴더 열기**로 열 수 있습니다. 다른 PC로 옮길 때는 이 `data` 폴더를 같은 위치에 복사하세요.
+- v1.4.0 이하 Windows 버전은 EXE 옆 `data` 폴더에 저장했습니다. 그 폴더에서 새 버전을 실행하면 자동으로 옮겨지고,
+  다른 곳에 풀었다면 홈의 **예전 버전 데이터 가져오기**로 예전 `GSAT_Practice` 폴더를 고르면 됩니다.
+
+## 인텔 맥
 인텔 맥은 실행 파일을 제공하지 않으니 소스로 실행하세요 (`pip install -r requirements.txt` 후 `python3 main.py`).
 
 ## 배포 (GitHub Actions 자동 빌드)
@@ -91,8 +100,7 @@ sh build_mac.sh     → dist/GSAT_Practice.app (맥에서 실행)
 ```
 
 - 받는 PC에 Python이 없어도 됩니다 (Windows 10/11 64비트).
-- 데이터(모의고사, 응시 기록)는 **EXE 옆 `data` 폴더**(폴더형이면 `GSAT_Practice\data`)에 저장됩니다.
-  EXE를 쓰기 금지된 곳(Program Files 등)에 두면 `%LOCALAPPDATA%\GSAT모의고사\data`에 저장됩니다.
+- 데이터(모의고사, 응시 기록)는 [데이터 저장 위치](#데이터-저장-위치)를 보세요 (소스로 실행하면 프로젝트 폴더의 `data`).
 - 동작 확인: `GSAT_Practice.exe --selftest` 실행 후 같은 폴더의 `selftest.txt` 확인.
 
 ## 개발 참고
