@@ -1069,13 +1069,15 @@ class RegionEditor(QDialog):
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(0)
         done = 0
-        base = storage.exam_dir(self.exam["id"])
+        # 영역마다 '새 이름의' 폴더에 이미지를 쓰고, 다 되면 exam.json 이 그 폴더를 가리키게 한다.
+        # 예전처럼 같은 이름 폴더를 지웠다 다시 만들면 OneDrive 동기화/백신이 파일을 잡고 있을 때
+        # "파일이 이미 있으므로 만들 수 없습니다" 로 저장이 계속 실패했다. 실패해도 기존 시험은 그대로 남는다.
         sections_json = []
+        created = []
         try:
             for s in self.sections:
-                tmp = base / f"{s.key}_new"
-                shutil.rmtree(tmp, ignore_errors=True)
-                tmp.mkdir(parents=True)
+                dir_name, tmp = storage.new_section_dir(self.exam["id"], s.key)
+                created.append(tmp)
                 # 보기(공통 자료) 이미지
                 passages_json, pid = [], {}
                 for k, psg in enumerate(s.ordered_passages(), start=1):
@@ -1108,21 +1110,24 @@ class RegionEditor(QDialog):
                     })
                     done += 1
                     progress.setValue(done)
-                final = base / s.key
-                shutil.rmtree(final, ignore_errors=True)
-                tmp.rename(final)
                 sections_json.append({
-                    "key": s.key, "name": s.name, "minutes": s.minutes, "expected": s.expected,
+                    "key": s.key, "dir": dir_name, "name": s.name, "minutes": s.minutes, "expected": s.expected,
                     "pages": s.pages, "two_column": s.two_column,
                     "start": s.start, "choices": s.choices, "passages": passages_json, "questions": qs_json,
                 })
+            old_sections = self.exam.get("sections", [])
+            self.exam["sections"] = sections_json
+            storage.save_exam(self.exam)
         except Exception as e:  # noqa: BLE001
             progress.close()
-            QMessageBox.critical(self, "저장 실패", str(e))
+            self.exam["sections"] = old_sections if "old_sections" in locals() else self.exam.get("sections", [])
+            for d in created:
+                shutil.rmtree(d, ignore_errors=True)
+            QMessageBox.critical(self, "저장 실패", f"{e}\n\n기존에 저장된 내용은 그대로 있습니다. 잠시 후 다시 저장해 보세요.\n"
+                                                "(OneDrive 등 동기화 폴더에 있으면 동기화 중일 때 실패할 수 있습니다)")
             return
         progress.close()
-        self.exam["sections"] = sections_json
-        storage.save_exam(self.exam)
+        storage.remove_unused_dirs(self.exam)  # 예전 이미지 폴더 정리 (못 지우면 다음에)
         self._cleanup()
         self.accept()
 
@@ -1164,6 +1169,15 @@ def sections_from_exam(exam: dict) -> list[ESection]:
     return out
 
 
-def is_region_exam(exam: dict) -> bool:
-    return bool(exam.get("source_pdf")) and all(
-        q.get("regions") for s in exam["sections"] for q in s["questions"])
+def has_regions(exam: dict) -> bool:
+    """문항 영역(PDF 좌표) 정보가 있는지. 원본 PDF 경로는 없어도 됨 (가져온 모의고사는 다시 연결)."""
+    qs = [q for s in exam["sections"] for q in s["questions"]]
+    return bool(qs) and all(q.get("regions") for q in qs)
+
+
+def max_page_used(exam: dict) -> int:
+    """시험이 사용하는 가장 큰 PDF 페이지 번호 (0부터)"""
+    pages = [p for s in exam["sections"] for p in s.get("pages", [])]
+    pages += [r["page"] for s in exam["sections"] for q in s["questions"] + s.get("passages", [])
+              for r in q.get("regions", [])]
+    return max(pages, default=0)

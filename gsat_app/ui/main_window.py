@@ -6,15 +6,17 @@ import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget,
-                               QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+                               QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QStackedWidget,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import storage
 from .answer_key import AnswerKeyDialog, AnswerKeyPage
+from .common import ACCENT
 from .create_dialog import CreateDialog
 from .exam_page import ExamPage
-from .region_editor import RegionEditor, is_region_exam, sections_from_exam
+from ..pages import PdfPages
+from .region_editor import RegionEditor, has_regions, max_page_used, sections_from_exam
 from .result_page import ResultPage
 
 
@@ -33,35 +35,59 @@ class HomePage(QWidget):
         lay.addSpacing(8)
 
         body = QHBoxLayout()
+        body.setSpacing(18)
         self.list = QListWidget()
+        self.list.setObjectName("examList")
+        self.list.setSpacing(4)
+        self.list.setStyleSheet(
+            "QListWidget#examList { background: #f6f7f9; border: none; border-radius: 12px; padding: 6px; }"
+            " QListWidget#examList::item { background: white; border: 1px solid #e4e6eb; border-radius: 10px;"
+            " padding: 0; margin: 2px 4px; }"
+            " QListWidget#examList::item:hover { border-color: #c4cfe6; }"
+            f" QListWidget#examList::item:selected {{ background: #f2f6fe; border: 2px solid {ACCENT}; }}")
         self.list.itemDoubleClicked.connect(lambda _: self.win.take_exam(full=True))
         body.addWidget(self.list, 1)
+        self.empty = QLabel("아직 모의고사가 없습니다.\n오른쪽 '+ 새 모의고사 만들기'로 PDF에서 만들거나,\n"
+                            ".gsat 파일을 이 창에 끌어다 놓으세요.")
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.empty.setStyleSheet("background: #f6f7f9; border-radius: 12px; font-size: 15px; color: #6b6f76;")
+        body.addWidget(self.empty, 1)
 
         side = QVBoxLayout()
+        side.setSpacing(6)
         buttons = [
-            ("+ 새 모의고사 만들기", self.win.create_exam, "primary"),
-            ("실전 응시 (전 영역)", lambda: self.win.take_exam(full=True), None),
-            ("영역 선택 응시", lambda: self.win.take_exam(full=False), None),
-            ("응시 기록", self.win.show_history, None),
-            ("정답 입력 / 수정", self.win.edit_answers, None),
-            ("문항 영역 수정", self.win.edit_exam, None),
-            (None, None, None),
-            ("내보내기 (파일로 공유)", self.win.export_exam, None),
-            ("가져오기", self.win.import_exam, None),
-            (None, None, None),
-            ("삭제", self.win.delete_exam, "danger"),
+            (None, "응시"),
+            ("실전 응시 (전 영역)", lambda: self.win.take_exam(full=True), "primary"),
+            ("영역 선택 응시", lambda: self.win.take_exam(full=False)),
+            ("응시 기록", self.win.show_history),
+            (None, "편집"),
+            ("정답 입력 / 수정", self.win.edit_answers),
+            ("문항 영역 수정", self.win.edit_exam),
+            (None, "모의고사 파일"),
+            ("+ 새 모의고사 만들기", self.win.create_exam),
+            ("내보내기 (파일로 공유)", self.win.export_exam),
+            ("가져오기", self.win.import_exam),
         ]
-        for text, fn, name in buttons:
+        for text, fn, *rest in buttons:
             if text is None:
-                side.addSpacing(10)
+                if side.count():
+                    side.addSpacing(10)
+                head = QLabel(fn)
+                head.setObjectName("section")
+                side.addWidget(head)
                 continue
             b = QPushButton(text)
-            b.setMinimumWidth(190)
-            if name:
-                b.setObjectName(name)
+            b.setMinimumWidth(200)
+            b.setMinimumHeight(36)
+            if rest:
+                b.setObjectName(rest[0])
             b.clicked.connect(fn)
             side.addWidget(b)
         side.addStretch()
+        delete = QPushButton("삭제")
+        delete.setObjectName("danger")
+        delete.clicked.connect(self.win.delete_exam)
+        side.addWidget(delete)
         body.addLayout(side)
         lay.addLayout(body, 1)
 
@@ -77,19 +103,57 @@ class HomePage(QWidget):
                 c = sum(storage.score_section(sec[x["key"]], x["answers"])["correct"]
                         for x in r["sections"] if x["key"] in sec)
                 n = sum(len(sec[x["key"]]["questions"]) for x in r["sections"] if x["key"] in sec)
-                last = f"\n최근 응시 {r['date'][:10]}  {c}/{n}  (총 {len(results)}회)"
+                last = f"최근 응시 {r['date'][:10]} · {c}/{n} · 총 {len(results)}회"
             total = sum(len(s["questions"]) for s in exam["sections"])
             keyed = sum(1 for s in exam["sections"] for q in s["questions"] if q.get("answer"))
             key_info = "정답 입력 완료" if total and keyed == total else f"정답 {keyed}/{total} 입력"
-            item = QListWidgetItem(f"{exam['name']}\n{parts}   ·   {key_info}{last}")
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, exam["id"])
+            item.setToolTip("더블클릭하면 실전 응시를 시작합니다")
+            card = _exam_card(exam["name"], parts, key_info, bool(total) and keyed == total, last)
+            item.setSizeHint(card.sizeHint())
             self.list.addItem(item)
-        if self.list.count():
+            self.list.setItemWidget(item, card)
+        has = self.list.count() > 0
+        self.list.setVisible(has)
+        self.empty.setVisible(not has)
+        if has:
             self.list.setCurrentRow(0)
 
     def selected_id(self) -> str | None:
         item = self.list.currentItem()
         return item.data(Qt.UserRole) if item else None
+
+
+def _exam_card(name: str, parts: str, key_info: str, key_done: bool, last: str) -> QWidget:
+    """홈 목록의 모의고사 한 줄 (제목 + 영역 구성 + 정답/최근 응시 배지)"""
+    w = QWidget()
+    w.setAttribute(Qt.WA_TransparentForMouseEvents)  # 클릭/더블클릭은 목록이 받도록
+    w.setStyleSheet("background: transparent;")
+    v = QVBoxLayout(w)
+    v.setContentsMargins(16, 12, 16, 12)
+    v.setSpacing(4)
+    title = QLabel(name)
+    title.setStyleSheet("font-size: 16px; font-weight: bold;")
+    v.addWidget(title)
+    info = QLabel(parts)
+    info.setStyleSheet("color: #6b6f76; font-size: 13px;")
+    info.setWordWrap(True)
+    v.addWidget(info)
+    tags = QHBoxLayout()
+    tags.setSpacing(6)
+    tags.setContentsMargins(0, 4, 0, 0)
+
+    def tag(text, fg, bg):
+        t = QLabel(text)
+        t.setStyleSheet(f"color:{fg}; background:{bg}; border-radius:9px; padding:2px 9px; font-size:12px;")
+        tags.addWidget(t)
+    tag(key_info, "#1b7a47" if key_done else "#a15c00", "#e6f5ec" if key_done else "#fdf1e0")
+    if last:
+        tag(last, "#2456c4", "#e8effd")
+    tags.addStretch()
+    v.addLayout(tags)
+    return w
 
 
 class HistoryDialog(QDialog):
@@ -170,17 +234,64 @@ class MainWindow(QMainWindow):
         exam = self._selected_exam()
         if not exam:
             return
-        if not is_region_exam(exam):
-            QMessageBox.information(self, "문항 영역 수정", "가져온 모의고사는 원본 PDF가 없어 문항 영역을 수정할 수 없습니다.\n"
+        if not has_regions(exam):
+            QMessageBox.information(self, "문항 영역 수정", "이 모의고사에는 문항 영역 정보가 없어 수정할 수 없습니다.\n"
                                                          "정답은 '정답 입력 / 수정'에서 고칠 수 있습니다.")
             return
-        pdf = exam["source_pdf"]
-        if not Path(pdf).exists():
-            QMessageBox.warning(self, "문항 영역 수정", f"원본 PDF를 찾을 수 없습니다.\n{pdf}\n\n"
-                                                    "PDF를 원래 위치로 옮긴 뒤 다시 시도하세요.")
-            return
+        found = storage.find_pdf(exam)
+        if found is None:
+            # 예전에 만든 모의고사인데 원본 PDF 를 옮겼거나, 가져온 모의고사 -> 원본 PDF 를 다시 지정
+            pdf = self._relink_pdf(exam)
+            if not pdf:
+                return
+        else:
+            pdf = str(found)
+        if Path(pdf) != storage.stored_pdf(exam["id"]):
+            # 아직 복사본이 없으면 지금 시험 폴더에 복사해 둔다 (다음부터는 원본이 없어도 수정 가능)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                pdf = str(storage.store_pdf(exam["id"], pdf))
+            except OSError:
+                pass  # 복사 실패해도 이번에는 원래 PDF 로 편집
+            finally:
+                QApplication.restoreOverrideCursor()
         if RegionEditor(exam, sections_from_exam(exam), pdf, self).exec() == QDialog.Accepted:
             self.go_home()
+
+    def _relink_pdf(self, exam: dict) -> str | None:
+        """원본 PDF 를 찾을 수 없을 때 사용자가 다시 골라 연결한다. 연결한 경로를 저장하고 돌려준다."""
+        old = exam.get("source_pdf") or ""
+        hint = exam.get("source") or (Path(old).name if old else "")
+        msg = ("원본 PDF를 찾을 수 없습니다." + (f"\n{old}" if old else "") +
+               "\n\n문항 영역을 수정하려면 이 모의고사를 만들 때 사용한 PDF를 다시 선택해 주세요." +
+               (f"\n(원래 파일 이름: {hint})" if hint else ""))
+        if QMessageBox.question(self, "원본 PDF 연결", msg, QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return None
+        start = str(Path(old).parent) if old and Path(old).parent.exists() else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(self, f"원본 PDF 선택{f' — {hint}' if hint else ''}", start,
+                                              "PDF (*.pdf)")
+        if not path:
+            return None
+        need = max_page_used(exam) + 1
+        try:
+            src = PdfPages(path)
+            count = src.page_count
+            src.close()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "원본 PDF 연결", f"PDF를 열 수 없습니다.\n{e}")
+            return None
+        if count < need:
+            QMessageBox.warning(self, "원본 PDF 연결", f"선택한 PDF는 {count}쪽인데, 이 모의고사는 {need}쪽까지 사용합니다.\n"
+                                                    "만들 때 사용한 PDF가 맞는지 확인하세요.")
+            return None
+        if hint and Path(path).name != hint and QMessageBox.question(
+                self, "원본 PDF 연결", f"파일 이름이 원래와 다릅니다.\n원래: {hint}\n선택: {Path(path).name}\n\n"
+                                     "이 PDF로 연결할까요? (다른 PDF면 문항 위치가 어긋납니다)") != QMessageBox.Yes:
+            return None
+        exam["source_pdf"] = str(Path(path).resolve())
+        exam.setdefault("source", Path(path).name)
+        storage.save_exam(exam)
+        return exam["source_pdf"]
 
     def edit_answers(self):
         exam = self._selected_exam()

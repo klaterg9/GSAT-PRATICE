@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
 from .. import storage
@@ -36,6 +36,30 @@ class ResultPage(QWidget):
         self.subtitle = QLabel()
         self.subtitle.setObjectName("muted")
         lay.addWidget(self.subtitle)
+        lay.addSpacing(6)
+        # 한눈에 보는 요약 카드 (맞힌 수 / 정답률 / 푼 문제 정답률 / 소요 시간)
+        cards = QHBoxLayout()
+        cards.setSpacing(10)
+        self.cards: list[tuple[QLabel, QLabel]] = []
+        for cap in ("맞힌 문항", "정답률 (전체)", "정답률 (푼 문제)", "소요 시간"):
+            box = QFrame()
+            box.setObjectName("card")
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(16, 10, 16, 12)
+            bl.setSpacing(2)
+            c = QLabel(cap)
+            c.setStyleSheet("color:#6b6f76; font-size:12px;")
+            val = QLabel()
+            val.setStyleSheet("font-size:24px; font-weight:800;")
+            note = QLabel()
+            note.setStyleSheet("color:#8a8f98; font-size:12px;")
+            bl.addWidget(c)
+            bl.addWidget(val)
+            bl.addWidget(note)
+            cards.addWidget(box)
+            self.cards.append((val, note))
+        lay.addLayout(cards)
+        lay.addSpacing(4)
 
         self.summary = QTableWidget(0, 7)
         self.summary.setHorizontalHeaderLabels(["영역", "맞음", "틀림", "미응답", "정답률 (전체)", "정답률 (푼 문제)",
@@ -45,7 +69,10 @@ class ResultPage(QWidget):
         self.summary.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.summary.verticalHeader().setVisible(False)
         self.summary.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.summary.setMaximumHeight(170)
+        self.summary.setShowGrid(False)
+        self.summary.setFocusPolicy(Qt.NoFocus)
+        self.summary.setSelectionMode(QTableWidget.NoSelection)
+        self.summary.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         lay.addWidget(self.summary)
 
         hint = QLabel("문항을 더블클릭하면 해당 문제를 다시 볼 수 있습니다.")
@@ -57,6 +84,9 @@ class ResultPage(QWidget):
         self.detail.verticalHeader().setVisible(False)
         self.detail.setEditTriggers(QTableWidget.NoEditTriggers)
         self.detail.setSelectionBehavior(QTableWidget.SelectRows)
+        self.detail.setShowGrid(False)
+        self.detail.setAlternatingRowColors(True)
+        self.detail.verticalHeader().setDefaultSectionSize(30)
         self.detail.cellDoubleClicked.connect(self._open_row)
         lay.addWidget(self.detail, 1)
 
@@ -127,11 +157,22 @@ class ResultPage(QWidget):
                     self.detail.setItem(r, c, item)
                 self._rows.append((s["key"], q["number"]))
 
+        graded = tot["correct"] + tot["wrong"] + tot["blank"]
+        attempted = tot["correct"] + tot["wrong"]
+        elapsed = sum(s["elapsed"] for s in result["sections"])
+        limit = sum(s["limit"] for s in result["sections"])
+        rate = tot["correct"] / graded * 100 if graded else 0.0
+        vals = [(f"{tot['correct']} / {graded}", f"틀림 {tot['wrong']} · 미응답 {tot['blank']}"),
+                (f"{rate:.1f}%", "안 푼 문제도 틀린 것으로 계산"),
+                (storage.fmt_rate(tot["correct"] / attempted * 100 if attempted else None), f"{attempted}문항 응답"),
+                (fmt_time(elapsed), f"제한 {fmt_time(limit)}")]
+        for (val, note), (v, n) in zip(self.cards, vals):
+            val.setText(v)
+            note.setText(n)
+
         if len(result["sections"]) > 1:
-            graded = tot["correct"] + tot["wrong"] + tot["blank"]
             r = self.summary.rowCount()
             self.summary.insertRow(r)
-            attempted = tot["correct"] + tot["wrong"]
             vals = ["합계", tot["correct"], tot["wrong"], tot["blank"],
                     f"{(tot['correct'] / graded * 100) if graded else 0:.1f}%",
                     storage.fmt_rate(tot["correct"] / attempted * 100 if attempted else None),
@@ -143,6 +184,12 @@ class ResultPage(QWidget):
                 f.setBold(True)
                 item.setFont(f)
                 self.summary.setItem(r, c, item)
+
+        # 요약 표 높이를 행 수에 딱 맞춘다 (빈 공간 없이)
+        self.summary.resizeRowsToContents()
+        h = self.summary.horizontalHeader().sizeHint().height() + sum(
+            self.summary.rowHeight(i) for i in range(self.summary.rowCount())) + 4
+        self.summary.setFixedHeight(h)
 
     def _open_row(self, row: int, _col: int):
         if 0 <= row < len(self._rows):

@@ -8,8 +8,8 @@ from pathlib import Path
 import pymupdf
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIntValidator
-from PySide6.QtWidgets import (QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+                               QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from .. import storage
 from .region_editor import ESection, RegionEditor
@@ -183,8 +183,17 @@ class CreateDialog(QDialog):
         exam = {"id": exam_id, "name": self.name_edit.text().strip() or Path(self.pdf_path).stem,
                 "created": datetime.now().isoformat(timespec="seconds"), "source": Path(self.pdf_path).name,
                 "source_pdf": str(Path(self.pdf_path).resolve()), "sections": []}
+        # 원본 PDF 를 시험 폴더에 복사해 두고 그걸로 편집 (원본을 옮기거나 지워도 나중에 수정 가능)
+        pdf = self.pdf_path
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            editor = RegionEditor(exam, sections, self.pdf_path, self, new=True)
+            pdf = str(storage.store_pdf(exam_id, self.pdf_path))
+        except OSError:
+            pass  # 복사 실패(용량 부족 등) -> 원래 경로로 편집, 나중에 수정할 때 다시 복사 시도
+        finally:
+            QApplication.restoreOverrideCursor()
+        try:
+            editor = RegionEditor(exam, sections, pdf, self, new=True)
         except Exception as e:  # noqa: BLE001
             shutil.rmtree(path, ignore_errors=True)
             QMessageBox.critical(self, "오류", f"PDF를 열 수 없습니다.\n{e}")

@@ -26,7 +26,9 @@ class OmrPanel(QScrollArea):
         super().__init__()
         self.setWidgetResizable(True)
         self.setFixedWidth(215)
-        self.setStyleSheet("QScrollArea { border-left: 1px solid #e5e7eb; }")
+        self.setObjectName("omr")
+        self.setStyleSheet("QScrollArea#omr { border: none; border-left: 1px solid #e5e7eb; background: #fafbfc; }"
+                           " QScrollArea#omr > QWidget > QWidget { background: #fafbfc; }")
         self.inner = QWidget()
         self.grid = QGridLayout(self.inner)
         self.grid.setContentsMargins(10, 10, 10, 10)
@@ -59,13 +61,26 @@ class OmrPanel(QScrollArea):
             self.bubbles.append(row)
         self.grid.setRowStretch(len(questions), 1)
 
-    def update_marks(self, questions, answers: dict, current: int, show_answer: bool = False):
+    def update_marks(self, questions, answers: dict, current: int, show_answer: bool = False,
+                     enabled: set[int] | None = None):
+        """enabled: 누를 수 있는 행 (오답만 다시 보기에서 목록에 없는 문항은 비활성). None 이면 전부."""
         for r, q in enumerate(questions):
+            on = enabled is None or r in enabled
+            self.num_buttons[r].setEnabled(on)
+            for b in self.bubbles[r]:
+                b.setEnabled(on)
             mine = answers.get(str(q["number"]))
             key = q.get("answer")
             cur = r == current
-            self.num_buttons[r].setStyleSheet(
-                "padding:0; font-size:12px;" + (f"background:{ACCENT}; color:white; border:none;" if cur else ""))
+            if cur:
+                nb = f"background:{ACCENT}; color:white; border:none; font-weight:bold;"
+            elif not on:
+                nb = "background:transparent; color:#c3c6cc; border:1px solid #eceef1;"
+            elif mine is not None and not show_answer:
+                nb = "background:#e8effd; color:#2456c4; border:1px solid #c9d8f8; font-weight:bold;"
+            else:
+                nb = "background:white;"
+            self.num_buttons[r].setStyleSheet("padding:0; font-size:12px; border-radius:6px;" + nb)
             for i, b in enumerate(self.bubbles[r], start=1):
                 color = None
                 if show_answer and key is not None:
@@ -75,8 +90,13 @@ class OmrPanel(QScrollArea):
                         color = BAD
                 elif i == mine:
                     color = "#222"
-                b.setStyleSheet("padding:0; border-radius:12px; font-size:11px;"
-                                + (f"background:{color}; color:white; border:none;" if color else "background:white;"))
+                if color and not on:
+                    look = f"background:{color}; color:white; border:none;"
+                elif color:
+                    look = f"background:{color}; color:white; border:none; font-weight:bold;"
+                else:
+                    look = "background:white; color:#7a7f87;" if on else "background:white; color:#d0d3d8;"
+                b.setStyleSheet("padding:0; border-radius:12px; font-size:11px;" + look)
         if 0 <= current < len(self.num_buttons):
             self.ensureWidgetVisible(self.num_buttons[current], 0, 60)
 
@@ -96,13 +116,16 @@ class ExamPage(QWidget):
         root.setSpacing(0)
 
         bar = QFrame()
-        bar.setStyleSheet("QFrame { background: #f7f8fa; border-bottom: 1px solid #e5e7eb; }")
+        bar.setObjectName("topbar")
+        # QLabel 도 QFrame 이라 '#topbar' 로 한정하지 않으면 모든 글자에 밑줄이 생긴다
+        bar.setStyleSheet("QFrame#topbar { background: #f7f8fa; border: none; border-bottom: 1px solid #e5e7eb; }"
+                          " QFrame#topbar QLabel { background: transparent; }")
         bl = QHBoxLayout(bar)
         bl.setContentsMargins(18, 10, 18, 10)
         self.section_label = QLabel()
         self.section_label.setStyleSheet("font-size: 16px; font-weight: bold; background: transparent;")
         self.count_label = QLabel()
-        self.count_label.setStyleSheet("color:#6b6f76; background: transparent;")
+        self.count_label.setStyleSheet("color:#6b6f76; background:#eceef2; border-radius:10px; padding:2px 10px;")
         self.timer_label = QLabel()
         self.timer_label.setStyleSheet("font-size: 22px; font-weight: bold; background: transparent;")
         self.quit_btn = QPushButton("그만두기")
@@ -119,13 +142,18 @@ class ExamPage(QWidget):
         # 문제 크기 조절 (Ctrl+휠로도 가능, 다음 실행에도 유지)
         self.zoom_label = QLabel()
         self.zoom_label.setStyleSheet("background: transparent; color:#555;")
+        self.zoom_label.setFixedWidth(46)
+        self.zoom_label.setAlignment(Qt.AlignCenter)
         for text, d in (("−", -0.1), ("+", 0.1)):
             b = QPushButton(text)
-            b.setFixedWidth(34)
+            b.setFixedSize(32, 30)
+            b.setStyleSheet("padding:0; font-size:16px;")
             b.setToolTip("문제 크기 (Ctrl+휠)")
             b.clicked.connect(lambda _=False, d=d: self.view.set_zoom(self.view.zoom + d))
             if d < 0:
-                bl.addWidget(QLabel("문제 크기"))
+                zl = QLabel("문제 크기")
+                zl.setStyleSheet("color:#6b6f76;")
+                bl.addWidget(zl)
                 bl.addWidget(b)
                 bl.addWidget(self.zoom_label)
             else:
@@ -190,7 +218,7 @@ class ExamPage(QWidget):
         left.addLayout(nav)
         wl.addLayout(left, 1)
         self.omr = OmrPanel()
-        self.omr.jump.connect(self._go)
+        self.omr.jump.connect(self._omr_jump)
         self.omr.mark.connect(self._omr_mark)
         wl.addWidget(self.omr)
         self.stack.addWidget(work)
@@ -313,9 +341,18 @@ class ExamPage(QWidget):
         self._record_time()
         self._render()
 
+    def _omr_jump(self, row: int):
+        """OMR 번호 클릭. row 는 '현재 영역 안에서의 순서'라서 해설 모드에서는 해설 목록 순서로 바꿔야 한다."""
+        if self.review:
+            i = self._review_index(self._review_section_key, row)
+            if i >= 0:
+                self._go(i)
+            return
+        self._go(row)
+
     def _omr_mark(self, row: int, choice: int):
         if self.review:
-            self._go(self._review_index(self._review_section_key, row))
+            self._omr_jump(row)  # 해설 모드에서는 마킹 대신 이동
             return
         if row != self.q_i:
             self._record_time()
@@ -408,12 +445,13 @@ class ExamPage(QWidget):
         if self._review_section_key != s["key"]:
             self.omr.build(s["questions"])
             self._review_section_key = s["key"]
+            self._review_rows = {s["questions"].index(rq) for rs, rq in self.review_items if rs["key"] == s["key"]}
         idx = s["questions"].index(q)
         self.section_label.setText(s["name"])
         self.count_label.setText(f"{self.r_i + 1} / {len(self.review_items)}")
         self.view.show_question(self.exam_path, s, q, idx, len(s["questions"]),
                                 answers.get(str(q["number"])), show_answer=True)
-        self.omr.update_marks(s["questions"], answers, idx, show_answer=True)
+        self.omr.update_marks(s["questions"], answers, idx, show_answer=True, enabled=self._review_rows)
         self.prev_btn.setEnabled(self.r_i > 0)
         self.next_btn.setEnabled(self.r_i < len(self.review_items) - 1)
 

@@ -21,17 +21,31 @@ BAD = "#d64545"
 STYLE = f"""
 * {{ font-family: "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "AppleGothic", sans-serif; }}
 QWidget {{ background: #ffffff; color: #1d1d1f; font-size: 14px; }}
-QPushButton {{ background: #f2f3f5; border: 1px solid #d9dbe0; border-radius: 6px; padding: 7px 14px; }}
-QPushButton:hover {{ background: #e8eaee; }}
-QPushButton:disabled {{ color: #a0a0a0; }}
+QPushButton {{ background: #ffffff; border: 1px solid #d9dce2; border-radius: 8px; padding: 7px 14px; }}
+QPushButton:hover {{ background: #f3f5f8; border-color: #c4c8d0; }}
+QPushButton:pressed {{ background: #e9ecf1; }}
+QPushButton:disabled {{ color: #a8acb3; background: #fafafb; border-color: #e6e8ec; }}
 QPushButton#primary {{ background: {ACCENT}; color: white; border: none; font-weight: bold; }}
 QPushButton#primary:hover {{ background: #2560d6; }}
+QPushButton#primary:disabled {{ background: #a9c1f5; }}
 QPushButton#danger {{ color: {BAD}; }}
-QLineEdit, QPlainTextEdit, QSpinBox, QComboBox {{ border: 1px solid #cfd2d8; border-radius: 5px; padding: 4px 6px; }}
-QListWidget, QTableWidget {{ border: 1px solid #e1e3e8; border-radius: 6px; }}
+QPushButton#danger:hover {{ background: #fdf0f0; border-color: #f0c4c4; }}
+QLineEdit, QPlainTextEdit, QSpinBox, QComboBox {{ border: 1px solid #cfd2d8; border-radius: 6px; padding: 4px 6px; }}
+QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
+QListWidget, QTableWidget {{ border: 1px solid #e4e6eb; border-radius: 10px; outline: 0; }}
 QListWidget::item {{ padding: 6px; }}
-QListWidget::item:selected, QTableWidget::item:selected {{ background: #e6eefc; color: #1d1d1f; }}
-QHeaderView::section {{ background: #f5f6f8; border: none; border-bottom: 1px solid #e1e3e8; padding: 6px; }}
+QListWidget::item:selected, QTableWidget::item:selected {{ background: #e8effd; color: #1d1d1f; }}
+QTableWidget {{ gridline-color: #f0f1f4; alternate-background-color: #fafbfc; }}
+QHeaderView::section {{ background: #f6f7f9; color: #555a62; border: none; border-bottom: 1px solid #e4e6eb;
+                        padding: 7px; font-weight: bold; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #d3d6dc; border-radius: 3px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: #b9bdc5; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
+QScrollBar::handle:horizontal {{ background: #d3d6dc; border-radius: 3px; min-width: 30px; }}
+QLabel#section {{ color: #8a8f98; font-size: 12px; font-weight: bold; }}
 QTabBar::tab {{ padding: 8px 16px; }}
 QTabBar::tab:selected {{ color: {ACCENT}; font-weight: bold; }}
 QScrollArea {{ border: none; }}
@@ -40,7 +54,9 @@ QCheckBox::indicator {{ width: 18px; height: 18px; border: 2px solid #9aa0a6; bo
 QCheckBox::indicator:hover {{ border-color: {ACCENT}; }}
 QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; image: none; }}
 QLabel#muted {{ color: #6b6f76; }}
-QLabel#title {{ font-size: 22px; font-weight: bold; }}
+QLabel#title {{ font-size: 24px; font-weight: 800; }}
+QFrame#card {{ background: #ffffff; border: 1px solid #e4e6eb; border-radius: 12px; }}
+QFrame#card QLabel {{ background: transparent; }}
 """
 
 
@@ -185,7 +201,7 @@ class QuestionView(QScrollArea):
         psg = next((p for p in section.get("passages", []) if p.get("id") == pid), None) if pid else None
         if psg is None:
             return
-        pix = QPixmap(str(exam_path / section["key"] / psg["image"]))
+        pix = QPixmap(str(exam_path / (section.get("dir") or section["key"]) / psg["image"]))
         if pix.isNull():
             return
         nums = sorted(x["number"] for x in section["questions"] if x.get("passage") == pid)
@@ -231,7 +247,7 @@ class QuestionView(QScrollArea):
         text_mode = q.get("choice_mode") == "text" and q.get("choices")
         img_name = q.get("image") if text_mode else (q.get("image_full") or q.get("image"))
         if img_name:
-            pix = QPixmap(str(exam_path / section["key"] / img_name))
+            pix = QPixmap(str(exam_path / (section.get("dir") or section["key"]) / img_name))
             if not pix.isNull():
                 self._pixmap = pix
                 self._image_label = QLabel()
