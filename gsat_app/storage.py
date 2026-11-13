@@ -269,6 +269,17 @@ def list_exams() -> list[dict]:
     return exams
 
 
+def rename_exam(exam_id: str, name: str) -> dict:
+    """시험 이름만 바꾼다 (폴더/ID 는 그대로라 응시 기록도 그대로 이어짐)."""
+    name = " ".join(name.split())
+    if not name:
+        raise ValueError("이름을 입력하세요.")
+    exam = load_exam(exam_id)
+    exam["name"] = name
+    save_exam(exam)
+    return exam
+
+
 def delete_exam(exam_id: str) -> None:
     shutil.rmtree(exam_dir(exam_id), ignore_errors=True)
 

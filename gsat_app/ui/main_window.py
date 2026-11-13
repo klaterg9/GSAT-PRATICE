@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog,
                                QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
                                QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -49,6 +49,7 @@ class HomePage(QWidget):
             " QListWidget#examList::item:hover { border-color: #c4cfe6; }"
             f" QListWidget#examList::item:selected {{ background: #f2f6fe; border: 2px solid {ACCENT}; }}")
         self.list.itemDoubleClicked.connect(lambda _: self.win.take_exam(full=True))
+        QShortcut(QKeySequence(Qt.Key_F2), self.list, self.win.rename_exam)  # F2: 이름 바꾸기
         body.addWidget(self.list, 1)
         self.empty = QLabel("아직 모의고사가 없습니다.\n오른쪽 '+ 새 모의고사 만들기'로 PDF에서 만들거나,\n"
                             ".gsat 파일을 이 창에 끌어다 놓으세요.")
@@ -65,6 +66,7 @@ class HomePage(QWidget):
             ("랜덤 모의고사 만들기", self.win.create_random),
             ("응시 기록", self.win.show_history),
             (None, "편집"),
+            ("이름 바꾸기", self.win.rename_exam),
             ("정답 입력 / 수정", self.win.edit_answers),
             ("문항 영역 수정", self.win.edit_exam),
             (None, "모의고사 파일"),
@@ -475,6 +477,21 @@ class MainWindow(QMainWindow):
         for u in event.mimeData().urls():
             if u.toLocalFile().lower().endswith(storage.EXPORT_EXT):
                 self.import_exam(u.toLocalFile())
+
+    def rename_exam(self):
+        exam = self._selected_exam()
+        if not exam:
+            return
+        name, ok = QInputDialog.getText(self, "이름 바꾸기", "새 모의고사 이름", text=exam["name"])
+        if not ok or " ".join(name.split()) in ("", exam["name"]):
+            return
+        try:
+            storage.rename_exam(exam["id"], name)
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            QMessageBox.critical(self, "이름 바꾸기", f"이름을 바꾸지 못했습니다.\n{e}")
+            return
+        self.go_home()
+        self.home.select(exam["id"])
 
     def delete_exam(self):
         exam = self._selected_exam()
